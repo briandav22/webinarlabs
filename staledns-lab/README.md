@@ -24,6 +24,47 @@ Every router a flow passes through exports it, with input and output interface, 
 | `impact` | **Slide 9.** 38 office and batch hosts send SYN-only flows to 10.20.4.15 (3 packets, 180 bytes; batch 6 packets, 360 bytes) and nothing comes back. 40 cloud hosts talk to 10.60.1.20 normally |
 | `fix` | Everyone talks to 10.60.1.20. 10.20.4.15 gets nothing |
 
+## Fake DNS for Kentik synthetic tests
+
+`--dns` also starts two DNS servers. They answer for `corp.example`, and their answer for `orders-api.corp.example` follows the phase, like the deck's DNS test:
+
+| Server | Listens on | `before` | `change` / `impact` | `fix` |
+|---|---|---|---|---|
+| On-prem DNS | 192.168.252.53:53 | 10.20.4.15, TTL 24 h | **10.20.4.15**, TTL 24 h (stale) | 10.60.1.20, TTL 5 min |
+| Cloud DNS (private zone) | 192.168.252.54:53 | 10.20.4.15, TTL 5 min | 10.60.1.20, TTL 5 min | 10.60.1.20, TTL 5 min |
+
+Other answers:
+- **`payments-db.corp.example`** always answers 10.30.8.40 from both servers, as a healthy control.
+- **Other names in `corp.example`** get NXDOMAIN.
+- **Names outside `corp.example`** are refused.
+
+Both servers answer over UDP and TCP, and every query is printed as it arrives (`--quiet-dns` turns that off).
+
+Port 53 needs root, so start the lab with `sudo`. The `run` and `dns` commands don't need your Kentik env vars, so plain `sudo` is fine.
+
+```bash
+sudo python3 staledns_lab.py aliases --apply      # now also adds .53 and .54
+sudo python3 staledns_lab.py run --collector 127.0.0.1 --port 9995 --dns \
+     --timeline "before:10,change:10,impact:20,fix:10"
+sudo python3 staledns_lab.py dns --phase impact   # DNS only, no flow
+```
+
+### Tests to create in Kentik
+
+Run a private synthetic agent on the same droplet, so it can reach 192.168.252.53 and .54 over the loopback aliases. In the Test Control Center, add these tests. The test names are from Kentik's synthetics docs; check field names in your portal:
+
+1. **DNS Server Grid.**
+   - Hostname: `orders-api.corp.example`. Servers: `192.168.252.53` and `192.168.252.54`. Record type: A. Agent: your private agent.
+   - It shows the two servers giving different answers during `change` and `impact`, and agreeing again after `fix`.
+2. **DNS Server Monitor against 192.168.252.53**, with **Allowed DNS Results** set to `10.60.1.20`.
+   - It goes critical as soon as the timeline reaches `change`, before any users fail in `impact`. That's the deck's "would have alerted at 20:26, inside the change window".
+3. **Optional control: DNS Server Monitor for `payments-db.corp.example`.**
+   - It stays healthy throughout, so you can show the test itself isn't broken.
+
+Two setups need extra steps:
+- **Agent on a different machine:** start the servers on addresses it can reach, for example `--dns-ips 10.0.0.5,10.0.0.6`, which must be two IPs on the droplet. Open UDP and TCP 53 in the firewall.
+- **Something already on port 53:** if a process such as dnsmasq holds `0.0.0.0:53`, the bind fails with a clear message. systemd-resolved only holds 127.0.0.53, so it doesn't get in the way.
+
 ## Run it
 
 On the lab droplet, next to your Kentik agent (default `127.0.0.1:9995`):
@@ -57,7 +98,7 @@ Useful checks:
 python3 staledns_lab.py preview --phase impact     # what a phase sends over one minute, no network
 python3 staledns_lab.py listen --port 9996 &       # decode what's on the wire...
 python3 staledns_lab.py run --port 9996 --duration 20 --no-console
-python3 -m unittest -v test_staledns_lab           # 9 tests, including a real send from four IPs
+python3 -m unittest -v test_staledns_lab           # 12 tests: real sends from four IPs, real DNS queries (needs: pip install dnspython)
 ```
 
 Notes:

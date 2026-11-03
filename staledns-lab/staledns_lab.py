@@ -28,6 +28,7 @@ Standard library only. Kentik credentials come from the environment, never from 
   python3 staledns_lab.py kentik onboard --dry-run
   python3 staledns_lab.py kentik dimensions --dry-run
   python3 staledns_lab.py listen --port 9995          # decode what's being sent
+  sudo python3 staledns_lab.py run --dns ...          # plus fake DNS on 192.168.252.53 / .54
 """
 from __future__ import annotations
 
@@ -104,6 +105,181 @@ PHASE_HELP = {
     "impact": "38 office/batch hosts -> 10.20.4.15 SYN only, no replies; 40 cloud hosts -> 10.60.1.20 (slide 9)",
     "fix": "everyone -> 10.60.1.20; nothing to 10.20.4.15",
 }
+
+# ------------------------------------------------------------------ fake DNS (for Kentik synthetic tests)
+
+DNS_ZONE = "corp.example"
+ORDERS_NAME = "orders-api.corp.example"
+# server -> label, listen IP
+DNS_SERVERS = {"onprem": ("On-prem DNS", "192.168.252.53"), "cloud": ("Cloud DNS (private zone)", "192.168.252.54")}
+# phase -> server -> (address, TTL) for orders-api. The on-prem copy is the one nobody owned.
+ORDERS_ANSWERS = {
+    "before": {"onprem": (OLD, 86400), "cloud": (OLD, 300)},
+    "change": {"onprem": (OLD, 86400), "cloud": (NEW, 300)},
+    "impact": {"onprem": (OLD, 86400), "cloud": (NEW, 300)},
+    "fix":    {"onprem": (NEW, 300), "cloud": (NEW, 300)},
+}
+# Names that answer the same everywhere, in every phase: a healthy control test.
+STATIC_RECORDS = {"payments-db.corp.example": ("10.30.8.40", 3600)}
+QTYPES = {1: "A", 2: "NS", 5: "CNAME", 6: "SOA", 12: "PTR", 15: "MX", 16: "TXT", 28: "AAAA", 33: "SRV", 255: "ANY"}
+
+
+def dns_lookup(server: str, phase: str, name: str) -> Optional[Tuple[str, int]]:
+    name = name.lower().rstrip(".")
+    if name == ORDERS_NAME:
+        return ORDERS_ANSWERS[phase][server]
+    return STATIC_RECORDS.get(name)
+
+
+def _qname(pkt: bytes, off: int) -> Tuple[str, int]:
+    labels = []
+    while True:
+        if off >= len(pkt):
+            raise ValueError("truncated name")
+        n = pkt[off]
+        if n == 0:
+            return ".".join(labels), off + 1
+        if n & 0xC0:
+            raise ValueError("compressed name in question")
+        labels.append(pkt[off + 1:off + 1 + n].decode("ascii", "replace"))
+        off += 1 + n
+
+
+def _name(name: str) -> bytes:
+    return b"".join(bytes([len(p)]) + p.encode() for p in name.split(".") if p) + b"\0"
+
+
+def _soa() -> bytes:
+    rdata = _name("ns1." + DNS_ZONE) + _name("hostmaster." + DNS_ZONE) + struct.pack("!IIIII", 2026110301, 3600, 600, 86400, 60)
+    return _name(DNS_ZONE) + struct.pack("!HHIH", 6, 1, 60, len(rdata)) + rdata
+
+
+def dns_response(pkt: bytes, server: str, phase: str) -> Tuple[Optional[bytes], str]:
+    """Answer one DNS query as `server` would in `phase`. Returns (response or None, log text)."""
+    if len(pkt) < 12:
+        return None, "short packet ignored"
+    qid, flags, qd, _an, _ns, ar = struct.unpack("!HHHHHH", pkt[:12])
+    rd = flags & 0x0100
+    if flags & 0x8000:
+        return None, "response ignored"
+    try:
+        qname, off = _qname(pkt, 12)
+        qtype, qclass = struct.unpack("!HH", pkt[off:off + 4])
+    except (ValueError, struct.error):
+        return struct.pack("!HHHHHH", qid, 0x8000 | rd | 1, 0, 0, 0, 0), "malformed query: FORMERR"
+    qend = off + 4
+    question = pkt[12:qend]
+    edns = ar > 0 and pkt[qend:qend + 3] == b"\x00\x00\x29"
+    opt = b"\x00" + struct.pack("!HHIH", 41, 1232, 0, 0) if edns else b""
+    name = qname.lower().rstrip(".")
+    tname = QTYPES.get(qtype, str(qtype))
+
+    def reply(rcode: int, answers: bytes = b"", n_ans: int = 0, soa: bool = False) -> bytes:
+        f = 0x8000 | (0x0400 if rcode != 5 else 0) | rd | rcode
+        return (struct.pack("!HHHHHH", qid, f, 1, n_ans, 1 if soa else 0, 1 if edns else 0)
+                + question + answers + (_soa() if soa else b"") + opt)
+
+    if (flags >> 11) & 0xF:
+        return reply(4), "%s %s: NOTIMP" % (tname, name)
+    if name != DNS_ZONE and not name.endswith("." + DNS_ZONE):
+        return reply(5), "%s %s: REFUSED (not %s)" % (tname, name, DNS_ZONE)
+    hit = dns_lookup(server, phase, name)
+    if hit is None:
+        if name == DNS_ZONE and qtype == 6:
+            return reply(0, _soa(), 1), "SOA %s" % name
+        return reply(3 if name != DNS_ZONE else 0, soa=True), "%s %s: %s" % (tname, name, "NXDOMAIN" if name != DNS_ZONE else "no data")
+    if qtype in (1, 255) and qclass == 1:
+        ip, ttl = hit
+        rr = b"\xc0\x0c" + struct.pack("!HHIH", 1, 1, ttl, 4) + socket.inet_aton(ip)
+        return reply(0, rr, 1), "A %s -> %s (TTL %d)" % (name, ip, ttl)
+    return reply(0, soa=True), "%s %s: no %s record" % (tname, name, tname)
+
+
+class DnsServer:
+    """One fake DNS server on UDP and TCP, answering for the current phase."""
+
+    def __init__(self, key: str, ip: str, port: int, get_phase, quiet: bool = False):
+        self.key, self.label = key, DNS_SERVERS[key][0]
+        self.ip, self.port, self.get_phase, self.quiet = ip, port, get_phase, quiet
+        self.queries = 0
+        self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp.bind((ip, port))
+        self.tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.tcp.bind((ip, port))
+        self.tcp.listen(16)
+
+    def start(self) -> "DnsServer":
+        threading.Thread(target=self._udp_loop, daemon=True).start()
+        threading.Thread(target=self._tcp_loop, daemon=True).start()
+        return self
+
+    def _answer(self, data: bytes, peer: str, proto: str) -> Optional[bytes]:
+        resp, text = dns_response(data, self.key, self.get_phase())
+        self.queries += 1
+        if not self.quiet:
+            print("[%s] %-24s %s/%s <- %-15s %s" % (time.strftime("%H:%M:%S"), self.label, self.ip, proto, peer, text), flush=True)
+        return resp
+
+    def _udp_loop(self) -> None:
+        while True:
+            try:
+                data, addr = self.udp.recvfrom(4096)
+            except OSError:
+                return
+            resp = self._answer(data, addr[0], "udp")
+            if resp:
+                self.udp.sendto(resp, addr)
+
+    def _tcp_loop(self) -> None:
+        while True:
+            try:
+                conn, addr = self.tcp.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._tcp_conn, args=(conn, addr[0]), daemon=True).start()
+
+    def _tcp_conn(self, conn: socket.socket, peer: str) -> None:
+        conn.settimeout(10)
+        try:
+            while True:
+                hdr = conn.recv(2)
+                if len(hdr) < 2:
+                    return
+                need, data = struct.unpack("!H", hdr)[0], b""
+                while len(data) < need:
+                    chunk = conn.recv(need - len(data))
+                    if not chunk:
+                        return
+                    data += chunk
+                resp = self._answer(data, peer, "tcp")
+                if resp:
+                    conn.sendall(struct.pack("!H", len(resp)) + resp)
+        except OSError:
+            return
+        finally:
+            conn.close()
+
+    def close(self) -> None:
+        for s in (self.udp, self.tcp):
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
+def start_dns(get_phase, port: int = 53, ips: Optional[List[str]] = None, quiet: bool = False) -> List[DnsServer]:
+    keys = list(DNS_SERVERS)
+    ips = ips or [DNS_SERVERS[k][1] for k in keys]
+    return [DnsServer(k, ip, port, get_phase, quiet).start() for k, ip in zip(keys, ips)]
+
+
+def _dns_bind_help(e: OSError, port: int) -> str:
+    hint = ("Port %d needs root: run with sudo (the run and dns commands don't need your Kentik env vars)." % port
+            if port < 1024 and getattr(e, "errno", None) == 13 else
+            "Add the DNS IPs first: sudo python3 %s aliases --apply" % sys.argv[0])
+    return "Can't start the DNS servers (%s). %s" % (e, hint)
+
 
 SYN, ACK, PSH, FIN = 0x02, 0x10, 0x08, 0x01
 FULL = SYN | ACK | PSH | FIN
@@ -286,6 +462,13 @@ def cmd_run(args) -> int:
     state = {"phase": args.phase, "stop": False}
     timeline = parse_timeline(args.timeline) if args.timeline else []
     rng = random.Random(args.seed)
+    dns = []
+    if args.dns:
+        try:
+            dns = start_dns(lambda: state["phase"], args.dns_port, _dns_ips(args), args.quiet_dns)
+        except OSError as e:
+            print(_dns_bind_help(e, args.dns_port), file=sys.stderr)
+            return 1
 
     def console():
         for line in sys.stdin:
@@ -297,6 +480,9 @@ def cmd_run(args) -> int:
             elif cmd == "status":
                 print("phase %s | flows sent: %s" % (state["phase"], ", ".join(
                     "%s %d" % (n, e.sent_flows) for n, e in exporters.items())))
+                for d in dns:
+                    print("  %s %s:%d answered %d queries; %s now -> %s" % (
+                        d.label, d.ip, d.port, d.queries, ORDERS_NAME, ORDERS_ANSWERS[state["phase"]][d.key][0]))
             elif cmd in ("quit", "exit", "q"):
                 state["stop"] = True
                 return
@@ -310,6 +496,8 @@ def cmd_run(args) -> int:
     if timeline:
         print("Timeline: " + ", ".join("%s %gm" % (p, s / 60) for p, s in timeline))
         state["phase"] = timeline[0][0]
+    for d in dns:
+        print("DNS: %s on %s:%d (udp and tcp)" % (d.label, d.ip, d.port))
     print("Phase %s: %s" % (state["phase"], PHASE_HELP[state["phase"]]))
     print("Type a phase name (%s), status, or quit." % ", ".join(PHASES))
     started = phase_start = time.time()
@@ -337,7 +525,59 @@ def cmd_run(args) -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         pass
+    for d in dns:
+        d.close()
     print("Stopped. Flows sent: %d" % sum(e.sent_flows for e in exporters.values()))
+    return 0
+
+
+def _dns_ips(args) -> Optional[List[str]]:
+    if not args.dns_ips:
+        return None
+    ips = [x.strip() for x in args.dns_ips.split(",") if x.strip()]
+    if len(ips) != 2:
+        sys.exit("--dns-ips needs two addresses: on-prem,cloud")
+    return ips
+
+
+def cmd_dns(args) -> int:
+    """Only the DNS servers, no flow. Type a phase name to change the answers."""
+    state = {"phase": args.phase}
+    try:
+        servers = start_dns(lambda: state["phase"], args.dns_port, _dns_ips(args), args.quiet_dns)
+    except OSError as e:
+        print(_dns_bind_help(e, args.dns_port), file=sys.stderr)
+        return 1
+    for d in servers:
+        print("%s on %s:%d (udp and tcp)" % (d.label, d.ip, d.port))
+
+    def show():
+        a = ORDERS_ANSWERS[state["phase"]]
+        print("Phase %s: %s -> on-prem %s, cloud %s" % (state["phase"], ORDERS_NAME, a["onprem"][0], a["cloud"][0]))
+    show()
+    print("Type a phase name (%s), status, or quit." % ", ".join(PHASES))
+    try:
+        if sys.stdin.isatty():
+            for line in sys.stdin:
+                cmd = line.strip().lower()
+                if cmd in PHASES:
+                    state["phase"] = cmd
+                    show()
+                elif cmd == "status":
+                    show()
+                    for d in servers:
+                        print("  %s answered %d queries" % (d.label, d.queries))
+                elif cmd in ("quit", "exit", "q"):
+                    break
+                elif cmd:
+                    print("commands: %s, status, quit" % ", ".join(PHASES))
+        else:
+            while True:
+                time.sleep(3600)
+    except KeyboardInterrupt:
+        pass
+    for d in servers:
+        d.close()
     return 0
 
 
@@ -388,7 +628,7 @@ def cmd_preview(args) -> int:
 
 def _alias_cmds(remove: bool) -> List[List[str]]:
     out = []
-    for _, (ip, _) in DEVICES.items():
+    for ip in [ip for ip, _ in DEVICES.values()] + [ip for _, ip in DNS_SERVERS.values()]:
         if platform.system() == "Darwin":
             out.append(["ifconfig", "lo0", "-alias" if remove else "alias", ip + "/32"])
         else:
@@ -601,7 +841,16 @@ def main(argv=None) -> int:
     r.add_argument("--seed", type=int, default=None)
     r.add_argument("--no-bind", action="store_true", help="send from this host's IP instead of the device IPs")
     r.add_argument("--no-console", action="store_true")
+    r.add_argument("--dns", action="store_true", help="also run the fake on-prem and cloud DNS servers, following the phase")
     r.set_defaults(func=cmd_run)
+
+    dn = sub.add_parser("dns", help="run only the fake DNS servers (for Kentik synthetic DNS tests)")
+    dn.add_argument("--phase", choices=list(PHASES), default="impact")
+    dn.set_defaults(func=cmd_dns)
+    for x in (r, dn):
+        x.add_argument("--dns-port", type=int, default=53)
+        x.add_argument("--dns-ips", help="on-prem,cloud listen IPs (default 192.168.252.53,192.168.252.54)")
+        x.add_argument("--quiet-dns", action="store_true", help="don't print every DNS query")
 
     a = sub.add_parser("aliases", help="add the device IPs (192.168.252.x) to loopback")
     a.add_argument("--apply", action="store_true")

@@ -108,3 +108,75 @@ class TestRealSend(unittest.TestCase):
         for e in exs.values():
             e.sock.close()
         rx.close()
+
+
+class TestDns(unittest.TestCase):
+    """Real UDP and TCP queries to the fake servers, on 127.0.0.x and a high port."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.state = {"phase": "impact"}
+        cls.port = 15353
+        cls.servers = L.start_dns(lambda: cls.state["phase"], cls.port, ["127.0.0.153", "127.0.0.154"], quiet=True)
+        time.sleep(0.1)
+
+    @classmethod
+    def tearDownClass(cls):
+        for s in cls.servers:
+            s.close()
+
+    def ask(self, ip, name, qtype=1, tcp=False, edns=False):
+        q = struct_query(name, qtype, edns)
+        if tcp:
+            s = socket.create_connection((ip, self.port), timeout=2)
+            s.sendall(len(q).to_bytes(2, "big") + q)
+            n = int.from_bytes(s.recv(2), "big")
+            data = b""
+            while len(data) < n:
+                data += s.recv(n - len(data))
+            s.close()
+            return data
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(2)
+        s.sendto(q, (ip, self.port))
+        data = s.recv(4096)
+        s.close()
+        return data
+
+    def a(self, data):
+        import dns.message
+        m = dns.message.from_wire(data)
+        return m.rcode(), [(rr.address, rs.ttl) for rs in m.answer for rr in rs], m
+
+    def test_phases(self):
+        expect = {"before": ("10.20.4.15", "10.20.4.15"), "impact": ("10.20.4.15", "10.60.1.20"),
+                  "change": ("10.20.4.15", "10.60.1.20"), "fix": ("10.60.1.20", "10.60.1.20")}
+        for phase, (onprem, cloud) in expect.items():
+            self.state["phase"] = phase
+            self.assertEqual(self.a(self.ask("127.0.0.153", "orders-api.corp.example"))[1][0][0], onprem, phase)
+            self.assertEqual(self.a(self.ask("127.0.0.154", "orders-api.corp.example", tcp=True))[1][0][0], cloud, phase)
+        self.state["phase"] = "impact"
+        self.assertEqual(self.a(self.ask("127.0.0.153", "orders-api.corp.example"))[1][0][1], 86400)
+
+    def test_other_answers(self):
+        import dns.rcode
+        rc, ans, _ = self.a(self.ask("127.0.0.153", "payments-db.corp.example"))
+        self.assertEqual(ans, [("10.30.8.40", 3600)])
+        rc, ans, m = self.a(self.ask("127.0.0.153", "nope.corp.example"))
+        self.assertEqual((rc, ans, len(m.authority)), (dns.rcode.NXDOMAIN, [], 1))
+        rc, ans, _ = self.a(self.ask("127.0.0.153", "example.com"))
+        self.assertEqual(rc, dns.rcode.REFUSED)
+        import dns.message
+        m = dns.message.from_wire(self.ask("127.0.0.154", "orders-api.corp.example", qtype=28))
+        self.assertEqual((m.rcode(), len(m.answer)), (0, 0))   # AAAA: no data, not an error
+
+    def test_edns_and_case(self):
+        _, ans, m = self.a(self.ask("127.0.0.154", "ORDERS-API.corp.example.", edns=True))
+        self.assertEqual(ans[0][0], "10.60.1.20")
+        self.assertEqual(m.edns, 0)
+
+
+def struct_query(name, qtype=1, edns=False):
+    import dns.message
+    q = dns.message.make_query(name, qtype, use_edns=0 if edns else False)
+    return q.to_wire()
