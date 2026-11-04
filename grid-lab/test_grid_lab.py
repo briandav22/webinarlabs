@@ -1,6 +1,26 @@
 import ipaddress, socket, struct, time, unittest
 import grid_lab as L
 
+# The eight template flowsets from a capture of a real PAN-OS firewall's NetFlow export (field IDs and
+# lengths only, no addresses).
+REAL_TEMPLATE_FLOWSETS = (
+    "0000004c0100001100010008000200040004000100050001000600010007000200080004000a0004000b0002000c0004"
+    "000e0004001500040016000400200002003d00010094000800e900010000005c01040015000100080002000400040001"
+    "00050001000600010007000200080004000a0004000b0002000c0004000e0004001500040016000400200002003d0001"
+    "0094000800e9000100e1000400e2000400e3000200e400020000004c0102001100010008000200040004000100050001"
+    "0006000100070002001b0010000a0004000b0002001c0010000e0004001500040016000400200002003d000100940008"
+    "00e900010000005c01060015000100080002000400040001000500010006000100070002001b0010000a0004000b0002"
+    "001c0010000e0004001500040016000400200002003d00010094000800e9000101190010011a001000e3000200e40002"
+    "000000580101001400010008000200040004000100050001000600010007000200080004000a0004000b0002000c0004"
+    "000e0004001500040016000400200002003d00010094000800e90001015a0004dd7d0020dd7e00400000006801050018"
+    "00010008000200040004000100050001000600010007000200080004000a0004000b0002000c0004000e000400150004"
+    "0016000400200002003d00010094000800e9000100e1000400e2000400e3000200e40002015a0004dd7d0020dd7e0040"
+    "0000005801030014000100080002000400040001000500010006000100070002001b0010000a0004000b0002001c0010"
+    "000e0004001500040016000400200002003d00010094000800e90001015a0004dd7d0020dd7e00400000006801070018"
+    "000100080002000400040001000500010006000100070002001b0010000a0004000b0002001c0010000e000400150004"
+    "0016000400200002003d00010094000800e9000101190010011a001000e3000200e40002015a0004dd7d0020dd7e0040"
+)
+
 
 def run(*phases, seed=7):
     """[(phase, seconds)] -> [(phase, device, record)]"""
@@ -81,16 +101,36 @@ class TestScenario(unittest.TestCase):
         self.assertEqual(t.tid, 257)
         ids = [i for i, _ in t.fields]
         self.assertEqual(ids, [1, 2, 4, 5, 6, 7, 8, 10, 11, 12, 14, 21, 22, 32, 61, 148, 233, 346, 56701, 56702])
-        self.assertEqual(dict(t.fields)[56701], 32)
-        self.assertEqual(dict(t.fields)[56702], 64)
-        self.assertEqual(t.size, 147)
+        lens = dict(t.fields)
+        self.assertEqual((lens[1], lens[10], lens[14]), (8, 4, 4), "as a real firewall sends them")
+        self.assertEqual((lens[56701], lens[56702]), (32, 64))
+        self.assertEqual(t.size, 155)
 
-    def test_encode_decode_pan(self):
-        recs = [r for _, d, r in run(("impact", 60)) if d == L.FIREWALL][:9]
-        pkt = L.encode(L.PAN_TEMPLATE, recs, 5, 0.0, 1000.0, 2, True)
-        hdr, out = L.decode(pkt, {})
-        self.assertEqual(hdr["count"], 10)
-        self.assertEqual(len(out), 9)
+    def test_template_packet_matches_real_firewall(self):
+        """The eight template flowsets, byte for byte as a PAN-OS firewall sent them in a capture."""
+        pkt = L.pan_template_packet(7, 0.0, 1000.0)
+        self.assertEqual(len(pkt), 740)
+        self.assertEqual(struct.unpack("!HH", pkt[:4]), (9, 8))
+        self.assertEqual(struct.unpack("!I", pkt[16:20])[0], 1, "source ID 1")
+        self.assertEqual(pkt[20:].hex(), REAL_TEMPLATE_FLOWSETS)
+        hdr, _ = L.decode(pkt, {})
+        self.assertEqual([ln for _, ln in hdr["flowsets"]], [76, 92, 76, 92, 88, 104, 88, 104])
+
+    def test_data_packets_one_flowset_per_record(self):
+        recs = [r for _, d, r in run(("maintenance", 30), ("impact", 120)) if d == L.FIREWALL]
+        pkts = L.pan_data_packets(recs, 5, 0.0, 1000.0)
+        tm = {}
+        L.decode(L.pan_template_packet(4, 0.0, 1000.0), tm)
+        out = []
+        for i, pkt in enumerate(pkts):
+            self.assertLessEqual(len(pkt), 1400)
+            hdr, got = L.decode(pkt, tm)
+            self.assertEqual(hdr["seq"], 5 + i)
+            self.assertEqual(hdr["count"], len(got))
+            self.assertTrue(all(fs == (257, 159) for fs in hdr["flowsets"]), "one 159-byte flowset per record, no padding")
+            self.assertEqual(len(pkt), 20 + 159 * len(got))
+            out += got
+        self.assertEqual(len(out), len(recs))
         for a, b in zip(recs, out):
             for k in ("src", "dst", "sport", "dport", "proto", "in_if", "out_if", "pkts", "bytes", "event",
                       "flow_id", "app", "user"):
@@ -103,18 +143,20 @@ class TestScenario(unittest.TestCase):
             import netflow
         except ImportError:
             self.skipTest("pip install netflow")
-        recs = [r for _, d, r in run(("impact", 60)) if d == L.FIREWALL][:9]
-        pkt = L.encode(L.PAN_TEMPLATE, recs, 1, 0.0, 1000.0, 2, True)
-        p = netflow.parse_packet(pkt, {"netflow": {}, "ipfix": {}})
+        recs = [r for _, d, r in run(("impact", 60)) if d == L.FIREWALL][:8]
+        tm = {"netflow": {}, "ipfix": {}}
+        netflow.parse_packet(L.pan_template_packet(1, 0.0, 1000.0), tm)
+        p = netflow.parse_packet(L.pan_data_packets(recs, 2, 0.0, 1000.0)[0], tm)
         self.assertEqual(p.header.version, 9)
         flows = [f.data for f in p.flows]
-        self.assertEqual(len(flows), 9)
+        self.assertEqual(len(flows), 8)
         for a, b in zip(recs, flows):
             self.assertEqual(str(ipaddress.ip_address(b["IPV4_SRC_ADDR"])), a["src"])
             self.assertEqual(b["L4_DST_PORT"], a["dport"])
             self.assertEqual(b["INPUT_SNMP"], a["in_if"])
             self.assertEqual(b["OUTPUT_SNMP"], a["out_if"])
             self.assertEqual(b["IN_BYTES"], a["bytes"])
+            self.assertEqual(b["NF_F_FW_EVENT"], a["event"])
 
     def test_each_device_sends_from_its_own_ip(self):
         rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -139,6 +181,7 @@ class TestScenario(unittest.TestCase):
             want = 257 if n == L.FIREWALL else 256
             self.assertTrue(all(r["template"] == want for r in seen[ip]), n)
         self.assertTrue(any(r["event"] == L.DENIED for r in seen[ips[L.FIREWALL]]))
+        self.assertEqual(exs[L.FIREWALL].sent_flows, len(by[L.FIREWALL]))
         for e in exs.values():
             e.sock.close()
         rx.close()
@@ -148,18 +191,20 @@ class TestScenario(unittest.TestCase):
         rx.bind(("127.0.0.1", 0)); rx.settimeout(1)
         exs = L.make_exporters(rx.getsockname(), ips={n: "127.0.0.1" for n in L.DEVICES})
         ex = exs[L.FIREWALL]
-        recs = [r for _, d, r in run(("impact", 120)) if d == L.FIREWALL][:9 * 45]
+        recs = [r for _, d, r in run(("impact", 300)) if d == L.FIREWALL][:8 * 45]
         ex.send(recs, time.time())
-        tmpl = []
+        kinds, seqs = [], []
         try:
             while True:
                 pkt, _ = rx.recvfrom(65535)
-                tmpl.append(struct.unpack("!H", pkt[20:22])[0] == 0)
+                kinds.append("T" if struct.unpack("!H", pkt[20:22])[0] == 0 else "D")
+                seqs.append(struct.unpack("!I", pkt[12:16])[0])
         except socket.timeout:
             pass
-        self.assertEqual(len(tmpl), 45)
-        self.assertEqual([i for i, t in enumerate(tmpl) if t], [0, 21, 42], "first packet, then after 20 packets")
-        self.assertEqual(ex.seq, 45, "v9 sequence counts export packets")
+        self.assertEqual(kinds.count("D"), 45)
+        self.assertEqual([i for i, k in enumerate(kinds) if k == "T"], [0, 21, 42],
+                         "template packet first, then after every 20 data packets")
+        self.assertEqual(seqs, list(range(len(kinds))), "v9 sequence counts every export packet")
         for e in exs.values():
             e.sock.close()
         rx.close()

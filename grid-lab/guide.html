@@ -331,10 +331,10 @@ footer ul{margin:0;padding-left:18px;display:grid;gap:3px}
 <section id="record" aria-labelledby="record-h">
   <div class="sec-h">
     <h2 id="record-h">The PAN-OS record</h2>
-    <p>Template 257, "IPv4 Enterprise": 20 fields and 147 bytes a record, in the order on Palo Alto's NetFlow Templates page. Two thirds of every record is the App-ID and User-ID strings. These are the exact bytes of one denied retry from the Sydney member. Hover a field to find its bytes.</p>
+    <p>Template 257, "IPv4 Enterprise": 20 fields and 155 bytes a record, laid out exactly as a real PAN-OS firewall sends it. Nearly two thirds of every record is the App-ID and User-ID strings. These are the exact bytes of one denied retry from the Sydney member. Hover a field to find its bytes.</p>
   </div>
   <div class="groups" aria-hidden="true">
-    <div class="gs" style="flex:37">Standard NetFlow · 37 B</div>
+    <div class="gs" style="flex:45">Standard NetFlow · 45 B</div>
     <div class="gn" style="flex:10">Session · 10 B</div>
     <div class="ge" style="flex:100">Palo Alto enterprise fields · 100 B</div>
   </div>
@@ -353,12 +353,12 @@ footer ul{margin:0;padding-left:18px;display:grid;gap:3px}
   </div>
     <div class="card fields tablebox">
       <table>
-        <thead><tr><th class="num">ID</th><th>Field</th><th class="num">Bytes</th><th>This record</th><th>In Kentik</th><th>Length from</th></tr></thead>
+        <thead><tr><th class="num">ID</th><th>Field</th><th class="num">Bytes</th><th>This record</th><th>In Kentik</th></tr></thead>
         <tbody id="fields"></tbody>
       </table>
     </div>
   <details class="tmpl card" style="padding:12px 14px">
-    <summary>The template the firewall sends first (88 bytes)</summary>
+    <summary>Template 257 as the firewall sends it (88 bytes, one of eight in its 740-byte template packet)</summary>
     <div class="codebox"><pre id="tmpl"></pre></div>
   </details>
 </section>
@@ -427,15 +427,16 @@ python3 -m unittest -v test_grid_lab</pre><button class="copy" type="button">Cop
     <p>How close this is to a real Palo, and what to check before showing it.</p>
   </div>
   <div class="notes">
-    <div class="card note"><h3>From Palo Alto's docs</h3><ul>
-      <li>NetFlow v9, template IDs 256–263. The lab uses 257, IPv4 with App-ID and User-ID.</li>
+    <div class="card note"><h3>Matched to a real firewall</h3><ul>
+      <li>The template packet: all eight PAN-OS templates (256–263), one per flowset, in the same order. It's identical to a captured one from byte 20 on.</li>
+      <li>Field lengths as sent: IN_BYTES 8 bytes, interfaces 4, App-ID 32, User-ID 64, NUL-padded. Palo's docs list shorter defaults.</li>
+      <li>One flowset per data record (159 bytes, no padding), header source ID 1, and a sequence number that counts packets.</li>
       <li>Field IDs and order, firewallEvent values, and enterprise number 25461.</li>
-      <li>Default lengths: 4 bytes for counters, 2 for interfaces, up to 32 for App-ID and up to 64 for User-ID.</li>
       <li>NetFlow profile defaults: template every 30 minutes or 20 packets, active timeout 5 minutes, port 2055.</li>
       <li>Denied sessions are exported with event 3. Palo's community forum confirms you can't turn this off on the firewall.</li>
     </ul></div>
     <div class="card note"><h3>Chosen for the lab</h3><ul>
-      <li>Lengths Palo doesn't publish: flowId 8, firewallEvent 1, DIRECTION 1, ICMP_TYPE 2. Collectors read records by the template, so different lengths on real gear still parse.</li>
+      <li>The capture only had update (5) records, so the shape of created, deleted and denied records is the lab's choice.</li>
       <li>A denied record carries the first packet, with output interface 0.</li>
       <li>Short sessions get a created record for the first packet, then deleted records for the rest.</li>
       <li>App-IDs <code>openvpn</code>, <code>unknown-udp</code> and <code>not-applicable</code>, and retries every 10 and 30 seconds.</li>
@@ -444,7 +445,6 @@ python3 -m unittest -v test_grid_lab</pre><button class="copy" type="button">Cop
     <div class="card note"><h3>To check before the webinar</h3><ul>
       <li>With Victor: what Grid Manager shows for an offline member, how it retries the tunnel and the key exchange, and whether it keeps serving DNS and DHCP locally.</li>
       <li>In the portal: that the firewall's type is Palo Alto Networks Firewall and the dimensions fill in.</li>
-      <li>If you can get one: a minute of <code>tcpdump -w pan.pcap udp port 2055</code> from a real Palo. With that, the template can match byte for byte.</li>
     </ul></div>
   </div>
 </section>
@@ -466,7 +466,7 @@ python3 -m unittest -v test_grid_lab</pre><button class="copy" type="button">Cop
 </div>
 
 <script>
-const DATA = {"before":{"rows":[[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[5,"10.70.1.10",1194,"10.20.1.5",1194,17,3,1,954,210000,"openvpn","",674420],[5,"10.20.1.5",1194,"10.70.1.10",1194,17,1,3,1909,420000,"openvpn","",674420],[1,"10.70.20.86",55252,"10.20.30.40",443,6,3,1,1,60,"ssl","corp\\cpatel",674427],[2,"10.70.20.86",55252,"10.20.30.40",443,6,3,1,111,24692,"ssl","corp\\cpatel",674427],[2,"10.20.30.40",443,"10.70.20.86",55252,6,1,3,177,217356,"ssl","corp\\cpatel",674427]],"seen":{"grid_syd_wan":10,"grid_pa_dc_fw":10,"grid_dc_core":10},"events":{"1":463,"2":926,"5":20}},"maintenance":{"rows":[[2,"10.70.1.10",1194,"10.20.1.5",1194,17,3,1,79,17500,"openvpn","",674420],[2,"10.20.1.5",1194,"10.70.1.10",1194,17,1,3,159,35000,"openvpn","",674420],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390]],"seen":{"grid_syd_wan":2,"grid_pa_dc_fw":2,"grid_dc_core":2},"events":{"2":2,"5":10}},"impact":{"rows":[[3,"10.70.1.10",53443,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",674631],[3,"10.70.1.10",61726,"10.20.1.5",2114,17,4,0,1,120,"not-applicable","",674639],[3,"10.70.1.10",55835,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",674755],[3,"10.70.1.10",56489,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",675157],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[1,"10.70.20.111",55252,"10.20.30.40",443,6,4,1,1,60,"ssl","corp\\ekelly",674397],[2,"10.70.20.111",55252,"10.20.30.40",443,6,4,1,111,24692,"ssl","corp\\ekelly",674397],[2,"10.20.30.40",443,"10.70.20.111",55252,6,1,4,177,217356,"ssl","corp\\ekelly",674397]],"seen":{"grid_syd_wan":42,"grid_pa_dc_fw":42,"grid_dc_core":0},"events":{"1":448,"2":896,"3":42,"5":10}},"fix":{"rows":[[1,"10.70.1.10",59161,"10.20.1.5",2114,17,4,1,1,400,"unknown-udp","",676322],[2,"10.70.1.10",59161,"10.20.1.5",2114,17,4,1,5,2000,"unknown-udp","",676322],[2,"10.20.1.5",2114,"10.70.1.10",59161,17,1,4,6,2100,"unknown-udp","",676322],[1,"10.70.1.10",58118,"10.20.1.5",1194,17,4,1,1,140,"openvpn","",676328],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[1,"10.70.20.86",62981,"10.20.30.40",443,6,4,1,1,60,"ssl","corp\\cpatel",676344],[2,"10.70.20.86",62981,"10.20.30.40",443,6,4,1,90,23327,"ssl","corp\\cpatel",676344],[2,"10.20.30.40",443,"10.70.20.86",62981,6,1,4,119,162197,"ssl","corp\\cpatel",676344]],"seen":{"grid_syd_wan":10,"grid_pa_dc_fw":12,"grid_dc_core":10},"events":{"1":450,"2":898,"5":18}},"hex":"0000005600000001110000d0c30a46010a000404aa0a14010500000f85ea870f85ea8700000000000000000a4b4703000063756e6f742d6170706c696361626c6500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","denied":{"src":"10.70.1.10","dst":"10.20.1.5","sport":53443,"dport":1194,"proto":17,"flags":0,"tos":0,"in_if":4,"out_if":0,"pkts":1,"bytes":86,"first":100035.0,"last":100035.0,"event":3,"flow_id":674631,"app":"not-applicable","user":"","first_ms":260434567,"last_ms":260434567},"template_hex":"000000580101001400010004000200040004000100050001000600010007000200080004000a0002000b0002000c0004000e0002001500040016000400200002003d00010094000800e90001015a0004dd7d0020dd7e0040"};
+const DATA = {"before":{"rows":[[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[5,"10.70.1.10",1194,"10.20.1.5",1194,17,3,1,954,210000,"openvpn","",674420],[5,"10.20.1.5",1194,"10.70.1.10",1194,17,1,3,1909,420000,"openvpn","",674420],[1,"10.70.20.86",55252,"10.20.30.40",443,6,3,1,1,60,"ssl","corp\\cpatel",674427],[2,"10.70.20.86",55252,"10.20.30.40",443,6,3,1,111,24692,"ssl","corp\\cpatel",674427],[2,"10.20.30.40",443,"10.70.20.86",55252,6,1,3,177,217356,"ssl","corp\\cpatel",674427]],"seen":{"grid_syd_wan":10,"grid_pa_dc_fw":10,"grid_dc_core":10},"events":{"1":463,"2":926,"5":20}},"maintenance":{"rows":[[2,"10.70.1.10",1194,"10.20.1.5",1194,17,3,1,79,17500,"openvpn","",674420],[2,"10.20.1.5",1194,"10.70.1.10",1194,17,1,3,159,35000,"openvpn","",674420],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390]],"seen":{"grid_syd_wan":2,"grid_pa_dc_fw":2,"grid_dc_core":2},"events":{"2":2,"5":10}},"impact":{"rows":[[3,"10.70.1.10",53443,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",674631],[3,"10.70.1.10",61726,"10.20.1.5",2114,17,4,0,1,120,"not-applicable","",674639],[3,"10.70.1.10",55835,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",674755],[3,"10.70.1.10",56489,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",675157],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[1,"10.70.20.111",55252,"10.20.30.40",443,6,4,1,1,60,"ssl","corp\\ekelly",674397],[2,"10.70.20.111",55252,"10.20.30.40",443,6,4,1,111,24692,"ssl","corp\\ekelly",674397],[2,"10.20.30.40",443,"10.70.20.111",55252,6,1,4,177,217356,"ssl","corp\\ekelly",674397]],"seen":{"grid_syd_wan":42,"grid_pa_dc_fw":42,"grid_dc_core":0},"events":{"1":448,"2":896,"3":42,"5":10}},"fix":{"rows":[[1,"10.70.1.10",59161,"10.20.1.5",2114,17,4,1,1,400,"unknown-udp","",676322],[2,"10.70.1.10",59161,"10.20.1.5",2114,17,4,1,5,2000,"unknown-udp","",676322],[2,"10.20.1.5",2114,"10.70.1.10",59161,17,1,4,6,2100,"unknown-udp","",676322],[1,"10.70.1.10",58118,"10.20.1.5",1194,17,4,1,1,140,"openvpn","",676328],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[1,"10.70.20.86",62981,"10.20.30.40",443,6,4,1,1,60,"ssl","corp\\cpatel",676344],[2,"10.70.20.86",62981,"10.20.30.40",443,6,4,1,90,23327,"ssl","corp\\cpatel",676344],[2,"10.20.30.40",443,"10.70.20.86",62981,6,1,4,119,162197,"ssl","corp\\cpatel",676344]],"seen":{"grid_syd_wan":10,"grid_pa_dc_fw":12,"grid_dc_core":10},"events":{"1":450,"2":898,"5":18}},"hex":"000000000000005600000001110000d0c30a46010a0000000404aa0a140105000000000f85ea870f85ea8700000000000000000a4b4703000063756e6f742d6170706c696361626c6500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","denied":{"src":"10.70.1.10","dst":"10.20.1.5","sport":53443,"dport":1194,"proto":17,"flags":0,"tos":0,"in_if":4,"out_if":0,"pkts":1,"bytes":86,"first":100035.0,"last":100035.0,"event":3,"flow_id":674631,"app":"not-applicable","user":"","first_ms":260434567,"last_ms":260434567},"template_hex":"000000580101001400010008000200040004000100050001000600010007000200080004000a0004000b0002000c0004000e0004001500040016000400200002003d00010094000800e90001015a0004dd7d0020dd7e0040"};
 const PH = {
   before: {kick:"before · normal day", title:"Both grid tunnels are up",
     links:{mem:"",off:"",mpls:"",sdwan:"off",lon:"",fwcore:"",apps:"",gm:""},
@@ -537,10 +537,10 @@ function show(ph){
 
 // record anatomy
 const F = [
-  [1,"IN_BYTES",4,"std","Bytes (metric)","doc"],[2,"IN_PKTS",4,"std","Packets (metric)","doc"],[4,"PROTOCOL",1,"std","Protocol","std"],
+  [1,"IN_BYTES",8,"std","Bytes (metric)","doc"],[2,"IN_PKTS",4,"std","Packets (metric)","doc"],[4,"PROTOCOL",1,"std","Protocol","std"],
   [5,"TOS",1,"std","ToS","std"],[6,"TCP_FLAGS",1,"std","TCP Flags","std"],[7,"L4_SRC_PORT",2,"std","Source Port","std"],
-  [8,"IPV4_SRC_ADDR",4,"std","Source IP","std"],[10,"INPUT_SNMP",2,"std","Input Interface","doc"],[11,"L4_DST_PORT",2,"std","Destination Port","std"],
-  [12,"IPV4_DST_ADDR",4,"std","Destination IP","std"],[14,"OUTPUT_SNMP",2,"std","Output Interface","doc"],[21,"LAST_SWITCHED",4,"std","flow timing","std"],
+  [8,"IPV4_SRC_ADDR",4,"std","Source IP","std"],[10,"INPUT_SNMP",4,"std","Input Interface","doc"],[11,"L4_DST_PORT",2,"std","Destination Port","std"],
+  [12,"IPV4_DST_ADDR",4,"std","Destination IP","std"],[14,"OUTPUT_SNMP",4,"std","Output Interface","doc"],[21,"LAST_SWITCHED",4,"std","flow timing","std"],
   [22,"FIRST_SWITCHED",4,"std","flow timing","std"],[32,"ICMP_TYPE",2,"std","ICMP Type","std"],[61,"DIRECTION",1,"ses","Direction","std"],
   [148,"flowId",8,"ses","Flow ID","std"],[233,"firewallEvent",1,"ses","Firewall Event","std"],[346,"privateEnterpriseNumber",4,"ent","marks Palo Alto fields","doc"],
   [56701,"App-ID",32,"ent","Application ID","doc"],[56702,"User-ID",64,"ent","User ID","doc"]
@@ -568,7 +568,7 @@ function anatomy(){
   const d = DATA.denied;
   const val = {1:d.bytes,2:d.pkts,4:"17 (UDP)",5:0,6:0,7:d.sport,8:d.src,10:"4 (ethernet1/4)",11:d.dport,12:d.dst,14:"0 (none)",
     21:fmtN(d.last_ms)+" ms",22:fmtN(d.first_ms)+" ms",32:0,61:"0 (ingress)",148:d.flow_id,233:"3 (denied)",346:25461,56701:'"'+d.app+'"',56702:'"" (no user)'};
-  $("#fields").innerHTML = F.map((f, fi) => `<tr data-f="${fi}" tabindex="0"><td class="num">${f[0]}</td><td>${f[1]}</td><td class="num">${f[2]}</td><td>${esc(val[f[0]])}</td><td>${PAN_DIMS.has(f[0]) ? "<b>" + f[4] + "</b>" : f[4]}</td><td><span class="src ${f[5] === "doc" ? "doc" : ""}">${f[5] === "doc" ? "Palo doc" : "standard"}</span></td></tr>`).join("");
+  $("#fields").innerHTML = F.map((f, fi) => `<tr data-f="${fi}" tabindex="0"><td class="num">${f[0]}</td><td>${f[1]}</td><td class="num">${f[2]}</td><td>${esc(val[f[0]])}</td><td>${PAN_DIMS.has(f[0]) ? "<b>" + f[4] + "</b>" : f[4]}</td></tr>`).join("");
   const hl = fi => {
     document.querySelectorAll(".hl").forEach(e => e.classList.remove("hl"));
     if (fi == null) return;

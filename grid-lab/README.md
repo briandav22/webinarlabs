@@ -34,33 +34,37 @@ In `impact`, the WAN router still exports the member's attempts. The firewall ex
 
 ## The firewall's record format
 
-Template 257, 20 fields and 147 bytes a record, in the order on Palo Alto's [NetFlow Templates](https://docs.paloaltonetworks.com/ngfw/administration/monitoring/netflow-monitoring/netflow-templates) page:
+The firewall's export is matched to a capture of a real PAN-OS firewall:
+- **Template packet:** all eight PAN-OS templates (256–263) go out together in their own packet, one template per flowset, in the same order as the real firewall. That's 740 bytes of payload, identical to the capture from byte 20 on. The lab's records use 257, "IPv4 Enterprise".
+- **Data packets:** every record is its own flowset (ID 257, length 159), with no padding, packed into packets of up to 1,400 bytes. The header's source ID is 1, and the sequence number counts export packets.
+- **Template refresh:** the template packet goes out first, then after every 20 data packets or 30 minutes. Those are the PAN-OS NetFlow profile defaults.
+
+Template 257 has 20 fields and 155 bytes per record:
 
 | ID | Field | Bytes | ID | Field | Bytes |
 |---|---|---|---|---|---|
-| 1 | IN_BYTES | 4 | 21 | LAST_SWITCHED | 4 |
+| 1 | IN_BYTES | **8** | 21 | LAST_SWITCHED | 4 |
 | 2 | IN_PKTS | 4 | 22 | FIRST_SWITCHED | 4 |
 | 4 | PROTOCOL | 1 | 32 | ICMP_TYPE | 2 |
 | 5 | TOS | 1 | 61 | DIRECTION | 1 |
 | 6 | TCP_FLAGS | 1 | 148 | flowId (session ID) | 8 |
 | 7 | L4_SRC_PORT | 2 | 233 | firewallEvent | 1 |
 | 8 | IPV4_SRC_ADDR | 4 | 346 | privateEnterpriseNumber (25461) | 4 |
-| 10 | INPUT_SNMP | 2 | 56701 | App-ID | 32 |
-| 11 | L4_DST_PORT | 2 | 56702 | User-ID | 64 |
+| 10 | INPUT_SNMP | **4** | 56701 | App-ID, NUL-padded | 32 |
+| 11 | L4_DST_PORT | 2 | 56702 | User-ID, NUL-padded | 64 |
 | 12 | IPV4_DST_ADDR | 4 | | | |
-| 14 | OUTPUT_SNMP | 2 | | | |
+| 14 | OUTPUT_SNMP | **4** | | | |
 
-Template refresh follows the PAN-OS NetFlow profile defaults: the template goes out in the first packet, then every 20 packets or 30 minutes. The v9 sequence number counts export packets.
+The bold lengths are what the firewall actually sends. Palo's [NetFlow Templates](https://docs.paloaltonetworks.com/ngfw/administration/monitoring/netflow-monitoring/netflow-templates) page lists shorter defaults (4-byte counters, 2-byte interfaces), and the first version of this lab used those.
 
-What's documented and what I chose:
-- **Documented by Palo Alto:** the template ID, field IDs and order, the firewallEvent values, the enterprise number, and the default lengths for counters (4), interfaces (2), App-ID (up to 32) and User-ID (up to 64).
-- **Chosen by me (Palo doesn't publish them):**
-  - The other lengths use the standard sizes: flowId 8, firewallEvent 1, DIRECTION 1, ICMP_TYPE 2. Collectors read records by the template, so a different length on real gear still parses.
-  - A denied record carries the first packet, with output interface 0.
-  - Short sessions get a created record for the first packet, then deleted records for the rest of each direction.
-- **Lab choices:** App-IDs `openvpn`, `unknown-udp` and `not-applicable` for denied sessions, the retry intervals, and the active timeout. The lab uses 1 minute (`--active-timeout 60`), which is a valid PAN-OS setting, so updates show up quickly. The PAN-OS default is 5 minutes.
+What still comes from the lab rather than the capture:
+- The capture only had update (5) records. A denied record here carries the first packet, with output interface 0.
+- Short sessions get a created record for the first packet, then deleted records for the rest of each direction.
+- The App-IDs are `openvpn`, `unknown-udp`, and `not-applicable` for denied sessions.
+- The member retries every 10 and 30 seconds.
+- The active timeout is 1 minute (`--active-timeout 60`), so updates show up quickly. That's a valid PAN-OS setting; the default is 5 minutes.
 
-If you have a real Palo (a VM-Series is enough), capture a minute of its export with `tcpdump -w pan.pcap udp port 2055` and send it to me. I can match the template byte for byte.
+`test_template_packet_matches_real_firewall` compares the template packet with the captured one byte for byte.
 
 ## Run it
 
@@ -84,7 +88,7 @@ Checks:
 python3 grid_lab.py preview --phase impact                        # what a phase sends, no network
 python3 grid_lab.py listen --port 9996 --firewall-only &          # decode the firewall's records off the wire
 python3 grid_lab.py run --port 9996 --no-bind --no-console --duration 30
-python3 -m unittest -v test_grid_lab                              # 13 tests, incl. a real send from three IPs
+python3 -m unittest -v test_grid_lab                              # 14 tests, incl. a real send from three IPs
 ```
 
 The test suite also decodes the firewall's packets with the [`netflow`](https://pypi.org/project/netflow/) package if it's installed (`pip install netflow`). That package names fields 233, 346, 56701 and 56702 as firewall event and PAN-OS fields.

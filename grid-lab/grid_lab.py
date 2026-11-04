@@ -319,33 +319,33 @@ ROUTER_TEMPLATE = Template(256, [(8, 4), (12, 4), (7, 2), (11, 2), (4, 1), (6, 1
                                           r["dport"], r["proto"], r["flags"], r["tos"], r["in_if"], r["out_if"],
                                           r["pkts"], r["bytes"], up(r["first"]), up(r["last"]), 24, 24))
 
-# The firewall: PAN-OS template 257, "IPv4 Enterprise", fields in the order Palo Alto's NetFlow
-# Templates page lists them. Lengths are the documented defaults where Palo gives one (counters
-# 4 bytes, interfaces 2 bytes, App-ID 32, User-ID 64) and the standard v9/IPFIX length otherwise
-# (flowId is unsigned64, firewallEvent unsigned8, DIRECTION 1 byte, ICMP_TYPE 2 bytes).
+# The firewall: exactly what a real PAN-OS firewall sends, taken from a capture of one.
+#  - All eight PAN-OS templates (256-263) go out together in their own packet, one template per
+#    flowset, in the order the firewall sends them. The lab only uses 257, "IPv4 Enterprise".
+#  - IN_BYTES is 8 bytes and INPUT_SNMP/OUTPUT_SNMP are 4 bytes on the wire, longer than the
+#    defaults on Palo's NetFlow Templates page. A 257 record is 155 bytes.
+#  - Every data record is its own flowset: header (id 257, length 159) plus the record, no padding.
+#  - Strings (App-ID, User-ID) are NUL-padded. The header's source ID is 1 and its sequence number
+#    counts export packets.
 PAN_ENTERPRISE_ID = 25461
-PAN_TEMPLATE = Template(257, [
-    (1, 4),       # IN_BYTES
-    (2, 4),       # IN_PKTS
-    (4, 1),       # PROTOCOL
-    (5, 1),       # TOS
-    (6, 1),       # TCP_FLAGS
-    (7, 2),       # L4_SRC_PORT
-    (8, 4),       # IPV4_SRC_ADDR
-    (10, 2),      # INPUT_SNMP
-    (11, 2),      # L4_DST_PORT
-    (12, 4),      # IPV4_DST_ADDR
-    (14, 2),      # OUTPUT_SNMP
-    (21, 4),      # LAST_SWITCHED
-    (22, 4),      # FIRST_SWITCHED
-    (32, 2),      # ICMP_TYPE (type * 256 + code)
-    (61, 1),      # DIRECTION (0 ingress)
-    (148, 8),     # flowId = PAN-OS session ID
-    (233, 1),     # firewallEvent
-    (346, 4),     # privateEnterpriseNumber = 25461
-    (56701, 32),  # App-ID
-    (56702, 64),  # User-ID
-], "!IIBBBH4sHH4sHIIHBQBI32s64s",
+PAN_SOURCE_ID = 1
+_PAN_BASE4 = [(1, 8), (2, 4), (4, 1), (5, 1), (6, 1), (7, 2), (8, 4), (10, 4), (11, 2), (12, 4), (14, 4),
+              (21, 4), (22, 4), (32, 2), (61, 1), (148, 8), (233, 1)]
+_PAN_BASE6 = [(27, 16) if t == 8 else (28, 16) if t == 12 else (t, l) for t, l in _PAN_BASE4]
+_PAN_NAT4 = [(225, 4), (226, 4), (227, 2), (228, 2)]
+_PAN_NAT6 = [(281, 16), (282, 16), (227, 2), (228, 2)]
+_PAN_ENT = [(346, 4), (56701, 32), (56702, 64)]
+# template id -> fields, in the order the firewall sends them
+PAN_TEMPLATE_SET = [(256, _PAN_BASE4), (260, _PAN_BASE4 + _PAN_NAT4), (258, _PAN_BASE6),
+                    (262, _PAN_BASE6 + _PAN_NAT6), (257, _PAN_BASE4 + _PAN_ENT),
+                    (261, _PAN_BASE4 + _PAN_NAT4 + _PAN_ENT), (259, _PAN_BASE6 + _PAN_ENT),
+                    (263, _PAN_BASE6 + _PAN_NAT6 + _PAN_ENT)]
+
+# 257 field by field: IN_BYTES 8, IN_PKTS 4, PROTOCOL 1, TOS 1, TCP_FLAGS 1, L4_SRC_PORT 2,
+# IPV4_SRC_ADDR 4, INPUT_SNMP 4, L4_DST_PORT 2, IPV4_DST_ADDR 4, OUTPUT_SNMP 4, LAST_SWITCHED 4,
+# FIRST_SWITCHED 4, ICMP_TYPE 2, DIRECTION 1, flowId 8, firewallEvent 1, privateEnterpriseNumber 4,
+# App-ID 32, User-ID 64
+PAN_TEMPLATE = Template(257, dict(PAN_TEMPLATE_SET)[257], "!QIBBBH4sIH4sIIIHBQBI32s64s",
     lambda r, up: (r["bytes"], r["pkts"], r["proto"], r["tos"], r["flags"], r["sport"], socket.inet_aton(r["src"]),
                    r["in_if"], r["dport"], socket.inet_aton(r["dst"]), r["out_if"], up(r["last"]), up(r["first"]),
                    0, 0, r["flow_id"], r["event"], PAN_ENTERPRISE_ID, _s(r["app"], 32), _s(r["user"], 64)))
@@ -355,8 +355,14 @@ FIELD_NAMES = {1: "bytes", 2: "pkts", 4: "proto", 5: "tos", 6: "flags", 7: "spor
                148: "flow_id", 233: "event", 346: "pen", 56701: "app", 56702: "user"}
 
 
+def _header(count: int, seq: int, boot: float, now: float, source_id: int) -> bytes:
+    up = max(0, int((now - boot) * 1000)) & 0xFFFFFFFF
+    return struct.pack("!HHIIII", 9, count, up, int(now), seq, source_id)
+
+
 def encode(t: Template, records: List[Dict], seq: int, boot: float, now: float, source_id: int,
            with_template: bool) -> bytes:
+    """The routers' packets: optional template, then one padded data flowset with all the records."""
     up = lambda x: max(0, int((x - boot) * 1000)) & 0xFFFFFFFF
     sets = t.flowset() if with_template else b""
     if records:
@@ -364,7 +370,38 @@ def encode(t: Template, records: List[Dict], seq: int, boot: float, now: float, 
         data = _pad(struct.pack("!HH", t.tid, 0) + body)
         sets += struct.pack("!HH", t.tid, len(data)) + data[4:]
     count = len(records) + (1 if with_template else 0)
-    return struct.pack("!HHIIII", 9, count, up(now), int(now), seq, source_id) + sets
+    return _header(count, seq, boot, now, source_id) + sets
+
+
+def pan_template_packet(seq: int, boot: float, now: float, source_id: int = PAN_SOURCE_ID) -> bytes:
+    """The firewall's template packet: all eight templates, one per flowset (740 bytes of payload)."""
+    sets = b""
+    for tid, fields in PAN_TEMPLATE_SET:
+        body = struct.pack("!HH", tid, len(fields)) + b"".join(struct.pack("!HH", t, l) for t, l in fields)
+        sets += struct.pack("!HH", 0, 4 + len(body)) + body
+    return _header(len(PAN_TEMPLATE_SET), seq, boot, now, source_id) + sets
+
+
+def pan_record_flowset(r: Dict, boot: float) -> bytes:
+    up = lambda x: max(0, int((x - boot) * 1000)) & 0xFFFFFFFF
+    rec_ = struct.pack(PAN_TEMPLATE.fmt, *PAN_TEMPLATE.packer(r, up))
+    return struct.pack("!HH", PAN_TEMPLATE.tid, 4 + len(rec_)) + rec_
+
+
+def pan_data_packets(records: List[Dict], seq: int, boot: float, now: float, source_id: int = PAN_SOURCE_ID,
+                     max_payload: int = 1400) -> List[bytes]:
+    """The firewall's data packets: one flowset per record, as many as fit in max_payload bytes."""
+    out, sets, n = [], b"", 0
+    for r in records:
+        fs = pan_record_flowset(r, boot)
+        if n and 20 + len(sets) + len(fs) > max_payload:
+            out.append(_header(n, seq + len(out), boot, now, source_id) + sets)
+            sets, n = b"", 0
+        sets += fs
+        n += 1
+    if n:
+        out.append(_header(n, seq + len(out), boot, now, source_id) + sets)
+    return out
 
 
 def decode(pkt: bytes, templates: Dict) -> Tuple[Dict, List[Dict]]:
@@ -372,17 +409,20 @@ def decode(pkt: bytes, templates: Dict) -> Tuple[Dict, List[Dict]]:
     ver, count, uptime, secs, seq, sid = struct.unpack("!HHIIII", pkt[:20])
     if ver != 9:
         raise ValueError("not NetFlow v9 (version %d)" % ver)
-    hdr = {"count": count, "uptime": uptime, "secs": secs, "seq": seq, "source_id": sid}
+    hdr = {"count": count, "uptime": uptime, "secs": secs, "seq": seq, "source_id": sid, "flowsets": []}
     out, off = [], 20
     while off + 4 <= len(pkt):
         fid, ln = struct.unpack("!HH", pkt[off:off + 4])
         if ln < 4:
             break
+        hdr["flowsets"].append((fid, ln))
         body = pkt[off + 4:off + ln]
         if fid == 0:
             p = 0
             while p + 4 <= len(body):
                 tid, n = struct.unpack("!HH", body[p:p + 4])
+                if tid < 256:
+                    break
                 templates[(sid, tid)] = [struct.unpack("!HH", body[p + 4 + 4 * i:p + 8 + 4 * i]) for i in range(n)]
                 p += 4 + 4 * n
         elif fid >= 256 and (sid, fid) in templates:
@@ -394,7 +434,7 @@ def decode(pkt: bytes, templates: Dict) -> Tuple[Dict, List[Dict]]:
                 for t, l in fl:
                     raw = body[q:q + l]
                     name = FIELD_NAMES.get(t, str(t))
-                    if t in (8, 12):
+                    if t in (8, 12, 225, 226):
                         vals[name] = socket.inet_ntoa(raw)
                     elif t in (56701, 56702):
                         vals[name] = raw.rstrip(b"\0").decode("ascii", "replace")
@@ -408,43 +448,65 @@ def decode(pkt: bytes, templates: Dict) -> Tuple[Dict, List[Dict]]:
 
 
 class Exporter:
-    """One fake device: its own UDP socket bound to its sending IP.
-
-    Routers resend their template every 30 seconds. The firewall follows PAN-OS's NetFlow profile:
-    the template goes out every `template_packets` export packets or `template_minutes`, whichever
-    comes first (PAN-OS defaults: 20 packets, 30 minutes), and always in the first packet.
-    """
+    """One fake router: its own UDP socket bound to its sending IP. Resends its template every 30 s."""
 
     def __init__(self, name: str, ip: str, collector: Tuple[str, int], source_id: int, template: Template,
-                 bind: bool = True, max_per_packet: int = 30, template_seconds: float = 30.0,
-                 template_packets: int = 0):
+                 bind: bool = True, max_per_packet: int = 30, template_seconds: float = 30.0):
         self.name, self.ip, self.collector, self.source_id, self.t = name, ip, collector, source_id, template
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         if bind:
             self.sock.bind((ip, 0))
         self.boot = time.time() - 86400 * 3
-        self.max_per_packet, self.template_seconds, self.template_packets = max_per_packet, template_seconds, template_packets
+        self.max_per_packet, self.template_seconds = max_per_packet, template_seconds
         self.seq = 0                 # v9: counts export packets
-        self.last_template, self.since_template = None, 0
+        self.last_template = None
         self.sent_flows = 0
+
+    def send(self, records: List[Dict], now: float) -> None:
+        chunks = [records[i:i + self.max_per_packet] for i in range(0, len(records), self.max_per_packet)] or [[]]
+        for chunk in chunks:
+            tmpl = self.last_template is None or now - self.last_template >= self.template_seconds
+            if not chunk and not tmpl:
+                continue
+            self.sock.sendto(encode(self.t, chunk, self.seq, self.boot, now, self.source_id, tmpl), self.collector)
+            self.seq += 1
+            if tmpl:
+                self.last_template = now
+            self.sent_flows += len(chunk)
+
+
+class PanExporter(Exporter):
+    """The firewall, sending the way PAN-OS does: a separate packet with all eight templates, first
+    and then every `template_packets` data packets or `template_minutes` (PAN-OS NetFlow profile
+    defaults: 20 packets, 30 minutes); data packets carry one flowset per record."""
+
+    def __init__(self, name: str, ip: str, collector: Tuple[str, int], bind: bool = True,
+                 template_packets: int = 20, template_minutes: float = 30.0):
+        super().__init__(name, ip, collector, PAN_SOURCE_ID, PAN_TEMPLATE, bind,
+                         template_seconds=template_minutes * 60)
+        self.template_packets, self.since_template = template_packets, 0
 
     def _template_due(self, now: float) -> bool:
         if self.last_template is None or now - self.last_template >= self.template_seconds:
             return True
         return bool(self.template_packets) and self.since_template >= self.template_packets
 
+    def _send_template(self, now: float) -> None:
+        self.sock.sendto(pan_template_packet(self.seq, self.boot, now), self.collector)
+        self.seq += 1
+        self.last_template, self.since_template = now, 0
+
     def send(self, records: List[Dict], now: float) -> None:
-        chunks = [records[i:i + self.max_per_packet] for i in range(0, len(records), self.max_per_packet)] or [[]]
-        for chunk in chunks:
-            tmpl = self._template_due(now)
-            if not chunk and not tmpl:
-                continue
-            self.sock.sendto(encode(self.t, chunk, self.seq, self.boot, now, self.source_id, tmpl), self.collector)
+        if self._template_due(now):
+            self._send_template(now)
+        for pkt in pan_data_packets(records, self.seq, self.boot, now):
+            if self._template_due(now):
+                self._send_template(now)
+            pkt = pkt[:12] + struct.pack("!I", self.seq) + pkt[16:]   # header bytes 12-15: sequence number
+            self.sock.sendto(pkt, self.collector)
             self.seq += 1
-            self.since_template = 0 if tmpl else self.since_template + 1
-            if tmpl:
-                self.last_template = now
-            self.sent_flows += len(chunk)
+            self.since_template += 1
+            self.sent_flows += struct.unpack("!H", pkt[2:4])[0]
 
 
 def make_exporters(collector, bind=True, ips: Optional[Dict[str, str]] = None, pan_template_packets=20,
@@ -453,8 +515,8 @@ def make_exporters(collector, bind=True, ips: Optional[Dict[str, str]] = None, p
     for i, (name, (ip, _, _)) in enumerate(DEVICES.items()):
         ip = (ips or {}).get(name, ip)
         if name == FIREWALL:
-            out[name] = Exporter(name, ip, collector, i + 1, PAN_TEMPLATE, bind, max_per_packet=9,
-                                 template_seconds=pan_template_minutes * 60, template_packets=pan_template_packets)
+            out[name] = PanExporter(name, ip, collector, bind, template_packets=pan_template_packets,
+                                    template_minutes=pan_template_minutes)
         else:
             out[name] = Exporter(name, ip, collector, i + 1, ROUTER_TEMPLATE, bind)
     return out
