@@ -49,7 +49,7 @@ Checks:
 
 ```bash
 python3 ipam_lab.py preview --phase impact        # what a phase sends over one minute, no network
-python3 -m unittest -v test_ipam_lab              # 9 tests, including a real send from three IPs
+python3 -m unittest -v test_ipam_lab              # 10 tests, including a real send from three IPs
 ```
 
 `kentik dimensions` creates two pairs, with one populator per value. It uses `replace_all`, so any populators added to these four dimensions by hand are removed.

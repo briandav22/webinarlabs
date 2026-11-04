@@ -98,7 +98,7 @@ Useful checks:
 python3 staledns_lab.py preview --phase impact     # what a phase sends over one minute, no network
 python3 staledns_lab.py listen --port 9996 &       # decode what's on the wire...
 python3 staledns_lab.py run --port 9996 --duration 20 --no-console
-python3 -m unittest -v test_staledns_lab           # 12 tests: real sends from four IPs, real DNS queries (needs: pip install dnspython)
+python3 -m unittest -v test_staledns_lab           # 13 tests: real sends from four IPs, real DNS queries (needs: pip install dnspython)
 ```
 
 Notes:

@@ -83,6 +83,9 @@ DEVICES = {
                                                   3: "Apps VLAN 10.20.30.0/24"}),
 }
 FIREWALL = "grid_pa_dc_fw"
+# Kentik caps device descriptions at 128 characters, so the firewall gets a shorter one than its
+# interface names would make.
+DESCRIPTIONS = {FIREWALL: "grid lab: 1 e1/1 trust, 2 e1/2 emea-wan, 3 e1/3 apac-wan (MPLS), 4 e1/4 apac-sdwan (SD-WAN, new)"}
 
 # Hops (device, in ifIndex, out ifIndex) from the client to the server. The reply uses the same
 # hops in reverse with in/out swapped.
@@ -697,7 +700,7 @@ def build_devices(plan_id: Optional[int], site_id: Optional[int] = None) -> List
     out = []
     for name, (ip, subtype, ifs) in DEVICES.items():
         d = {"deviceName": name, "deviceSubtype": subtype,
-             "deviceDescription": "grid lab: " + ", ".join("%d %s" % kv for kv in ifs.items()),
+             "deviceDescription": DESCRIPTIONS.get(name) or "grid lab: " + ", ".join("%d %s" % kv for kv in ifs.items()),
              "sendingIps": [ip], "deviceSampleRate": 1, "deviceBgpType": "none",
              "deviceBgpFlowspec": False, "minimizeSnmp": False}
         if plan_id is not None:
@@ -706,6 +709,16 @@ def build_devices(plan_id: Optional[int], site_id: Optional[int] = None) -> List
             d["siteId"] = site_id
         out.append(d)
     return out
+
+# Kentik rejects a device whose description is longer than this (HTTP 400, "device_description must not
+# exceed 128 characters"). Checked before any API call, dry runs included.
+MAX_DESCRIPTION = 128
+
+
+def check_devices(devices: List[Dict]) -> List[str]:
+    return ["%s: description is %d characters, Kentik allows %d: %r" % (
+                d["deviceName"], len(d["deviceDescription"]), MAX_DESCRIPTION, d["deviceDescription"])
+            for d in devices if len(d["deviceDescription"]) > MAX_DESCRIPTION]
 
 
 ROLES = [("Sydney grid member", [SYD_MEMBER + "/32"]), ("London grid member", [LON_MEMBER + "/32"]),
@@ -735,6 +748,10 @@ def _creds(args, need_plan: bool) -> Optional[str]:
 
 def cmd_onboard(args) -> int:
     devices = build_devices(args.plan_id, args.site_id)
+    problems = check_devices(devices)
+    if problems:
+        print("Fix these before onboarding:\n  " + "\n  ".join(problems), file=sys.stderr)
+        return 2
     if args.dry_run:
         print("# POST %s%s/batch_create (existing names go to PUT .../batch_update with their id)" % (args.api_url, DEVICE_PATH))
         print(json.dumps({"devices": devices}, indent=2))

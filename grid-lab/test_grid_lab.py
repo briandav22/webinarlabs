@@ -180,5 +180,14 @@ class TestScenario(unittest.TestCase):
         self.assertTrue(all(ipaddress.ip_address(ip) in nets["Sydney office users"] for ip, _ in L.office_hosts()))
 
 
+class TestKentikLimits(unittest.TestCase):
+    def test_device_descriptions_fit(self):
+        """Kentik rejects descriptions over 128 characters with HTTP 400."""
+        for d in L.build_devices(99):
+            self.assertLessEqual(len(d["deviceDescription"]), 128, d["deviceName"])
+        self.assertEqual(L.check_devices(L.build_devices(99)), [])
+        self.assertTrue(L.check_devices([dict(L.build_devices(99)[0], deviceDescription="x" * 129)]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -719,6 +719,16 @@ def build_devices(plan_id: Optional[int], site_id: Optional[int] = None) -> List
         out.append(d)
     return out
 
+# Kentik rejects a device whose description is longer than this (HTTP 400, "device_description must not
+# exceed 128 characters"). Checked before any API call, dry runs included.
+MAX_DESCRIPTION = 128
+
+
+def check_devices(devices: List[Dict]) -> List[str]:
+    return ["%s: description is %d characters, Kentik allows %d: %r" % (
+                d["deviceName"], len(d["deviceDescription"]), MAX_DESCRIPTION, d["deviceDescription"])
+            for d in devices if len(d["deviceDescription"]) > MAX_DESCRIPTION]
+
 
 def dimension_plan() -> List[Dict]:
     """c_src_outage / c_dst_outage: one populator per group, plus the two orders-api addresses."""
@@ -744,6 +754,10 @@ def _creds(args, need_plan: bool) -> Optional[str]:
 
 def cmd_onboard(args) -> int:
     devices = build_devices(args.plan_id, args.site_id)
+    problems = check_devices(devices)
+    if problems:
+        print("Fix these before onboarding:\n  " + "\n  ".join(problems), file=sys.stderr)
+        return 2
     if args.dry_run:
         print("# POST %s%s/batch_create (existing names go to PUT .../batch_update with their id)" % (args.api_url, DEVICE_PATH))
         print(json.dumps({"devices": devices}, indent=2))

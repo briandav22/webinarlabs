@@ -84,12 +84,13 @@ Checks:
 python3 grid_lab.py preview --phase impact                        # what a phase sends, no network
 python3 grid_lab.py listen --port 9996 --firewall-only &          # decode the firewall's records off the wire
 python3 grid_lab.py run --port 9996 --no-bind --no-console --duration 30
-python3 -m unittest -v test_grid_lab                              # 12 tests, incl. a real send from three IPs
+python3 -m unittest -v test_grid_lab                              # 13 tests, incl. a real send from three IPs
 ```
 
 The test suite also decodes the firewall's packets with the [`netflow`](https://pypi.org/project/netflow/) package if it's installed (`pip install netflow`). That package names fields 233, 346, 56701 and 56702 as firewall event and PAN-OS fields.
 
 Notes:
+- **Descriptions are capped at 128 characters.** Kentik rejects a longer device description with HTTP 400. `onboard` checks this before calling the API, dry runs included.
 - **Device type matters.** Kentik collects device-specific dimensions based on the device type. `onboard` sets the firewall to `paloalto` and warns if Kentik reports a different type after the call. If the Firewall Event and Application ID dimensions are empty, check the type in Settings → Network Devices.
 - **Custom dimensions:** `kentik dimensions` creates `c_src_gridrole` and `c_dst_gridrole`, shown as "Src Grid lab role" and "Dst Grid lab role". The values are Sydney grid member, London grid member, Grid Master (dc1), Sydney office users and dc1 apps. It uses `replace_all`, so any populators added to them by hand are removed.
 - **No SNMP:** interfaces show by number. The names, including the firewall's ethernet1/x and zones, are in each device's description and in the table above.
