@@ -1,0 +1,625 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sydney Grid Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; the phase stepper (topology + who-sees-what) is the only wide, interactive block.
+   Same palette family as the roundtable pages: green = Infoblox / DDI, violet = Kentik / flow, red = denied. */
+:root{
+  --bg:#F1F3F6;--surface:#FFFFFF;--sunken:#E8ECF1;--fg:#16202B;--muted:#5A6676;--line:#D5DBE3;--link:#A8B2BF;--zone:#ECEFF3;
+  --ddi:#17805A;--ddi-soft:#DFF2E9;--flow:#5F45D3;--flow-soft:#ECE8FD;--bad:#D0433A;--bad-soft:#FBE6E3;--warn:#AE710B;--warn-soft:#FAEED4;
+  --ok:#2A8749;--ok-soft:#E1F2E5;--base:#2C69CE;--base-soft:#E2ECFB;--on-accent:#FFFFFF;--code:#F7F8FA;
+  --g-std:#E3EAF5;--g-ses:#ECE8FD;--g-ent:#FAEED4;
+  --font-ui:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0E131A;--surface:#161D26;--sunken:#1E2731;--fg:#E4E9EF;--muted:#96A2B1;--line:#2B3643;--link:#4A5666;--zone:#131A22;
+  --ddi:#4BBF8C;--ddi-soft:#15342A;--flow:#9B86FF;--flow-soft:#262146;--bad:#F06A5E;--bad-soft:#3B2120;--warn:#E2A63A;--warn-soft:#372A13;
+  --ok:#5CC179;--ok-soft:#172F1F;--base:#5F97EF;--base-soft:#18263C;--on-accent:#0E131A;--code:#121820;
+  --g-std:#1C2A3D;--g-ses:#262146;--g-ent:#372A13;color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0E131A;--surface:#161D26;--sunken:#1E2731;--fg:#E4E9EF;--muted:#96A2B1;--line:#2B3643;--link:#4A5666;--zone:#131A22;
+  --ddi:#4BBF8C;--ddi-soft:#15342A;--flow:#9B86FF;--flow-soft:#262146;--bad:#F06A5E;--bad-soft:#3B2120;--warn:#E2A63A;--warn-soft:#372A13;
+  --ok:#5CC179;--ok-soft:#172F1F;--base:#5F97EF;--base-soft:#18263C;--on-accent:#0E131A;--code:#121820;
+  --g-std:#1C2A3D;--g-ses:#262146;--g-ent:#372A13;color-scheme:dark}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 var(--font-ui);-webkit-font-smoothing:antialiased;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1120px;margin:0 auto}
+h1,h2,h3{text-wrap:balance;margin:0;font-weight:600}
+h1{font-size:clamp(30px,4.4vw,44px);line-height:1.08;letter-spacing:-.015em}
+h2{font-size:22px;line-height:1.25;letter-spacing:-.005em}
+h3{font-size:15px;line-height:1.3}
+p{margin:0}
+a{color:var(--flow);text-underline-offset:2px}
+code,.mono{font-family:var(--font-mono);font-size:.9em}
+:focus-visible{outline:2px solid var(--flow);outline-offset:2px}
+.kick{font:500 11px/1.2 var(--font-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.muted{color:var(--muted)}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:10px}
+
+/* hero */
+.hero{padding-block:40px 28px;display:grid;grid-template-columns:minmax(0,1fr);gap:18px}
+.hero .lede{font-size:17px;line-height:1.55;max-width:68ch}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:500 12px/1 var(--font-mono);padding:6px 9px;border-radius:6px;background:var(--surface);border:1px solid var(--line);color:var(--muted)}
+.chip b{color:var(--fg);font-weight:500}
+.handoff{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px}
+.who{padding:14px 16px;display:grid;gap:6px;min-width:0;border-left-width:3px}
+.who.ddi{border-left-color:var(--ddi)}.who.flow{border-left-color:var(--flow)}
+.who .kick{color:var(--ddi)}.who.flow .kick{color:var(--flow)}
+nav.toc{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:13.5px;padding-block:10px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+nav.toc a{color:var(--muted);text-decoration:none}
+nav.toc a:hover{color:var(--fg)}
+main{display:grid;grid-template-columns:minmax(0,1fr);gap:56px;padding-block:32px 48px}
+section{display:grid;grid-template-columns:minmax(0,1fr);gap:16px;min-width:0}
+.sec-h{display:grid;gap:6px}
+.sec-h p{max-width:72ch;color:var(--muted)}
+
+/* phase stepper */
+.phases{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.ph{all:unset;box-sizing:border-box;cursor:pointer;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--surface);display:grid;gap:2px;min-width:0}
+.ph:hover{border-color:var(--muted)}
+.ph:focus-visible{outline:2px solid var(--flow);outline-offset:2px}
+.ph .n{font:500 11px var(--font-mono);color:var(--muted)}
+.ph .t{font-weight:600;font-size:14px}
+.ph .s{font-size:12.5px;color:var(--muted);line-height:1.35}
+.ph[aria-selected="true"]{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+.ph[aria-selected="true"] .n,.ph[aria-selected="true"] .s{color:var(--bg);opacity:.75}
+.stage{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.topo{padding:14px 16px 12px;display:grid;gap:8px;min-width:0}
+.topo-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px}
+.svgbox{overflow-x:auto}
+.topo svg{display:block;width:100%;min-width:660px;max-height:420px;height:auto}
+.panel{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;min-width:0;align-items:start}
+.panel .card{padding:14px 16px;display:grid;gap:8px}
+.panel ul{margin:0;padding-left:18px;display:grid;gap:5px;font-size:14px}
+.side-h{display:flex;align-items:center;gap:8px;font:500 12px var(--font-mono);letter-spacing:.04em}
+.side-h i{width:9px;height:9px;border-radius:2px;flex:none}
+.side-ddi .side-h{color:var(--ddi)}.side-ddi .side-h i{background:var(--ddi)}
+.side-flow .side-h{color:var(--flow)}.side-flow .side-h i{background:var(--flow)}
+.ph-title{font-size:18px;font-weight:600}
+
+.hops{display:grid;grid-template-columns:minmax(0,1fr);gap:6px}
+.hop{display:grid;grid-template-columns:118px minmax(0,1fr) 34px;gap:8px;align-items:center;font-size:12.5px}
+.hop .d{font-family:var(--font-mono);font-size:12px}
+.hop .bar{height:8px;border-radius:4px;background:var(--sunken);position:relative;overflow:hidden}
+.hop .bar span{position:absolute;inset:0 auto 0 0;border-radius:4px;background:var(--flow);transition:width .35s}
+.hop.denied .bar span{background:var(--bad)}
+.hop .c{font-family:var(--font-mono);text-align:right;font-variant-numeric:tabular-nums}
+.hop .what{grid-column:2 / 4;color:var(--muted);font-size:12px;margin-top:-3px}
+
+/* topology svg */
+.z{fill:var(--zone);stroke:var(--line);stroke-width:.8}
+.zl{font:500 10.5px var(--font-mono);fill:var(--muted);letter-spacing:.08em}
+.ln{fill:none;stroke:var(--link);stroke-width:2;transition:opacity .3s,stroke .3s}
+.ln.off{opacity:.12}
+.ln.down{stroke:var(--bad);stroke-dasharray:6 5}
+.gl{fill:none;stroke:var(--ddi);stroke-width:4.5;stroke-linecap:round;opacity:0;transition:opacity .3s,stroke .3s}
+.gl.on{opacity:.85;stroke-dasharray:2 9;animation:march 1.1s linear infinite}
+.gl.bad{opacity:.95;stroke:var(--bad);stroke-dasharray:2 9;animation:march 1.1s linear infinite}
+@keyframes march{to{stroke-dashoffset:-11}}
+@media (prefers-reduced-motion:reduce){.gl.on,.gl.bad{animation:none}.hop .bar span{transition:none}}
+.lnl{font:10.5px var(--font-mono);fill:var(--muted)}
+.lnl.off{opacity:.3}.lnl.bad{fill:var(--bad)}
+.nd rect{fill:var(--surface);stroke:var(--link);stroke-width:1.3;transition:fill .3s,stroke .3s}
+.nd.dev rect{stroke:var(--flow)}
+.nd.ib rect{stroke:var(--ddi)}
+.nd.fw rect{stroke:var(--flow);stroke-width:1.8}
+.nd .t{font:500 12.5px var(--font-ui);fill:var(--fg)}
+.nd .s{font:10px var(--font-mono);fill:var(--muted)}
+.nd .st{font:500 10px var(--font-mono);fill:var(--muted)}
+.nd.bad rect{stroke:var(--bad);stroke-width:2.2;fill:var(--bad-soft)}.nd.bad .st{fill:var(--bad)}
+.nd.warn rect{stroke:var(--warn);stroke-width:2.2;fill:var(--warn-soft)}.nd.warn .st{fill:var(--warn)}
+.nd.ok .st{fill:var(--ok)}
+.nd.idle{opacity:.45}
+.port{font:10px var(--font-mono);fill:var(--muted)}
+.xm{opacity:0;transition:opacity .3s}.xm.on{opacity:1}
+.xm line{stroke:var(--bad);stroke-width:3;stroke-linecap:round}
+.xm text{font:500 10.5px var(--font-mono);fill:var(--bad)}
+.legend{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:12px;color:var(--muted);padding:2px 4px 0}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:16px;height:4px;border-radius:2px;display:inline-block}
+
+/* records table */
+.tablebox{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font:500 10.5px var(--font-mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);background:var(--sunken)}
+td{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+td.num,th.num{text-align:right}
+tr:last-child td{border-bottom:0}
+.tcap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 16px;padding:10px 12px;font-size:13px;border-bottom:1px solid var(--line)}
+.tcap .counts{font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+.ev{display:inline-block;font:500 11px/1 var(--font-mono);padding:4px 7px;border-radius:5px;min-width:64px;text-align:center}
+.ev1{background:var(--base-soft);color:var(--base)}
+.ev2{background:var(--sunken);color:var(--muted)}
+.ev3{background:var(--bad);color:var(--on-accent)}
+.ev5{background:var(--flow-soft);color:var(--flow)}
+tr.denied td{background:var(--bad-soft)}
+
+/* record anatomy */
+.groups{display:flex;height:34px;border-radius:7px;overflow:hidden;border:1px solid var(--line);font:500 11.5px var(--font-mono)}
+.groups div{display:flex;align-items:center;padding:0 10px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gs{background:var(--g-std)}.gn{background:var(--g-ses);min-width:max-content!important}.ge{background:var(--g-ent)}
+.anat{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:12px;align-items:stretch}
+.hex{padding:12px 14px;overflow-x:auto;font:12px/1.75 var(--font-mono)}
+.hexrow{display:grid;grid-template-columns:40px repeat(16,22px) 12px 140px;white-space:nowrap}
+.hexrow .o{color:var(--muted)}
+.b{text-align:center;border-radius:3px;cursor:default}
+.b.gs{background:var(--g-std)}.b.gn{background:var(--g-ses)}.b.ge{background:var(--g-ent)}
+.b.z0{color:var(--muted)}
+.b.hl,.asc span.hl{outline:1.5px solid var(--fg);outline-offset:-1.5px;background:var(--surface)}
+.asc{color:var(--muted);letter-spacing:.02em}
+.asc span{border-radius:2px}
+.fields{min-width:0}
+.fields table td:nth-child(2){font-family:var(--font-ui)}
+.fields tr{cursor:default}
+.fields tr.hl td{background:var(--sunken)}
+.src{font:500 10.5px var(--font-mono);padding:2px 6px;border-radius:4px;border:1px solid var(--line);color:var(--muted)}
+.src.doc{border-color:var(--ddi);color:var(--ddi)}
+.events{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:1fr;gap:8px}
+.evc{padding:10px 12px;display:grid;gap:4px;min-width:0}
+.evc .v{font:600 20px var(--font-mono)}
+.evc.unused{opacity:.55}
+.evc.lab{border-color:var(--flow)}
+.evc.den{border-color:var(--bad)}
+.evc.den .v{color:var(--bad)}
+.evc .l{font-size:12.5px;color:var(--muted);line-height:1.35}
+details.tmpl summary{cursor:pointer;font-size:14px}
+details.tmpl pre{margin:10px 0 0}
+
+/* run + views + prompts */
+.steps{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;counter-reset:s}
+.step{display:grid;grid-template-columns:28px minmax(0,1fr);gap:12px}
+.step::before{counter-increment:s;content:counter(s);font:500 12px/26px var(--font-mono);text-align:center;width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--muted)}
+.step>div{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;min-width:0}
+.codebox{position:relative}
+pre{margin:0;background:var(--code);border:1px solid var(--line);border-radius:8px;padding:12px 70px 12px 14px;overflow-x:auto;font:12.5px/1.6 var(--font-mono);color:var(--fg)}
+pre .c{color:var(--muted)}
+.copy{position:absolute;top:7px;right:7px;font:500 11.5px var(--font-ui);padding:4px 9px;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer}
+.copy:hover{border-color:var(--fg)}
+.views{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+.view{padding:16px;display:grid;gap:10px;align-content:start}
+.view dl{margin:0;display:grid;grid-template-columns:76px minmax(0,1fr);gap:4px 10px;font-size:13.5px}
+.view dt{font:500 11px/1.9 var(--font-mono);color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.view dd{margin:0;min-width:0}
+.view .see{font-size:14px;border-top:1px solid var(--line);padding-top:10px}
+.prompts{display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
+.prompt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 14px}
+.prompt p{font-size:14.5px}
+.prompt .tag{font:500 10.5px var(--font-mono);color:var(--flow);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:3px}
+.prompt .copy{position:static}
+.notes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.note{padding:16px;display:grid;gap:8px;align-content:start}
+.note ul{margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px}
+footer{border-top:1px solid var(--line);padding-block:20px 40px;display:grid;gap:8px;font-size:13px;color:var(--muted)}
+footer ul{margin:0;padding-left:18px;display:grid;gap:3px}
+
+@media (max-width:900px){
+  .panel{grid-template-columns:minmax(0,1fr)}
+  .anat{grid-template-columns:minmax(0,1fr)}
+  .notes{grid-template-columns:minmax(0,1fr)}
+  .events{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media (max-width:600px){
+  .handoff{grid-template-columns:minmax(0,1fr)}
+  .phases{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .hero{padding-block:24px 20px}
+  .groups{font-size:10.5px}
+  .groups div{padding:0 6px}
+  .events{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+<header class="hero">
+  <p class="kick">webinarlabs · grid-lab</p>
+  <h1>Sydney Grid Lab</h1>
+  <p class="lede">After a WAN circuit migration, the Sydney Infoblox grid member drops off the grid. Users are fine, the change gets closed, and the Grid Master's replication queue for Sydney keeps growing. The cause is a Palo Alto firewall denying the grid's UDP 1194 and 2114 on the new zone. Its flow records say so.</p>
+  <div class="chips">
+    <span class="chip"><b>3</b> devices</span>
+    <span class="chip">NetFlow <b>v9</b></span>
+    <span class="chip">PAN-OS template <b>257</b></span>
+    <span class="chip">UDP <b>1194</b> tunnel · <b>2114</b> key exchange</span>
+    <span class="chip">Kentik type <b>paloalto</b></span>
+  </div>
+  <div class="handoff">
+    <div class="card who ddi"><span class="kick">Victor · Infoblox</span><p>Grid Manager shows Sydney offline and its replication queue growing. DDI knows the member can't reach the Grid Master, but not where the traffic stops.</p></div>
+    <div class="card who flow"><span class="kick">You · Kentik</span><p>Flow shows the member's traffic reaching the firewall and stopping there, marked <b>Flow Denied</b>, on the interface that moved during the maintenance.</p></div>
+  </div>
+  <nav class="toc" aria-label="Sections">
+    <a href="#phases">Four phases</a><a href="#record">The PAN-OS record</a><a href="#run">Run it</a><a href="#kentik">Show it in Kentik</a><a href="#prompts">AI Advisor prompts</a><a href="#notes">Documented vs assumed</a>
+  </nav>
+</header>
+
+<main>
+<section id="phases" aria-labelledby="phases-h">
+  <div class="sec-h">
+    <h2 id="phases-h">Four phases</h2>
+    <p>The order <code>--timeline "before:10,maintenance:3,impact:20,fix:10"</code> plays them in. The counts and records come from the lab's own simulator, five minutes per phase.</p>
+  </div>
+  <div class="phases" role="tablist" aria-label="Phase">
+    <button class="ph" role="tab" id="tab-before" data-ph="before" aria-controls="stage"><span class="n">before</span><span class="t">Tunnels up</span><span class="s">Sydney over MPLS</span></button>
+    <button class="ph" role="tab" id="tab-maintenance" data-ph="maintenance" aria-controls="stage"><span class="n">maintenance</span><span class="t">Circuit cutover</span><span class="s">Sydney goes quiet</span></button>
+    <button class="ph" role="tab" id="tab-impact" data-ph="impact" aria-controls="stage"><span class="n">impact</span><span class="t">Grid blocked</span><span class="s">Office fine, grid denied</span></button>
+    <button class="ph" role="tab" id="tab-fix" data-ph="fix" aria-controls="stage"><span class="n">fix</span><span class="t">Rule updated</span><span class="s">Rejoin and catch up</span></button>
+  </div>
+
+  <div class="stage" id="stage" role="tabpanel">
+    <div class="card topo">
+      <div class="topo-h"><span class="kick" id="p-kick"></span><span class="ph-title" id="p-title"></span></div>
+      <div class="svgbox"><svg viewBox="0 0 880 316" role="img" aria-labelledby="topo-t">
+        <title id="topo-t">Topology: Sydney grid member and office behind grid_syd_wan, two circuits to the Palo Alto firewall grid_pa_dc_fw, London member on EMEA WAN, then grid_dc_core with the Grid Master and dc1 apps</title>
+        <rect class="z" x="8" y="8" width="408" height="222" rx="10"/><text class="zl" x="22" y="26">SYDNEY</text>
+        <rect class="z" x="232" y="234" width="184" height="78" rx="10"/><text class="zl" x="246" y="251">LONDON</text>
+        <rect class="z" x="676" y="4" width="196" height="308" rx="10"/><text class="zl" x="864" y="306" text-anchor="end">DC1</text>
+
+        <path id="ln-mem" class="ln" d="M196 60 C223 60 223 108 250 108"/>
+        <path id="ln-off" class="ln" d="M196 175 C223 175 223 128 250 128"/>
+        <path id="ln-mpls" class="ln" d="M400 106 C435 106 435 100 470 100"/>
+        <path id="ln-sdwan" class="ln" d="M400 130 C435 130 435 152 470 152"/>
+        <path id="ln-lon" class="ln" d="M400 281 C560 281 600 232 600 182"/>
+        <path id="ln-fwcore" class="ln" d="M630 128 L690 128"/>
+        <path id="ln-apps" class="ln" d="M765 100 L765 60"/>
+        <path id="ln-gm" class="ln" d="M765 156 L765 236"/>
+
+        <path id="gl-mem" class="gl" d="M196 60 C223 60 223 108 250 108"/>
+        <path id="gl-mpls" class="gl" d="M400 106 C435 106 435 100 470 100"/>
+        <path id="gl-sdwan" class="gl" d="M400 130 C435 130 435 152 470 152"/>
+        <path id="gl-lon" class="gl" d="M400 281 C560 281 600 232 600 182"/>
+        <path id="gl-fwcore" class="gl" d="M630 128 L690 128"/>
+        <path id="gl-gm" class="gl" d="M765 156 L765 236"/>
+
+        <text id="lb-mpls" class="lnl" x="435" y="92" text-anchor="middle">MPLS</text>
+        <text id="lb-sdwan" class="lnl" x="435" y="172" text-anchor="middle">SD-WAN</text>
+        <text class="lnl" x="470" y="272" text-anchor="middle">EMEA WAN</text>
+        <text id="lb-gm" class="lnl" x="775" y="202">tunnel</text>
+
+        <g id="nd-mem" class="nd ib"><rect x="20" y="30" width="176" height="60" rx="8"/><text class="t" x="32" y="50">Sydney grid member</text><text class="s" x="32" y="66">10.70.1.10 · Infoblox</text><text class="st" x="32" y="81" id="st-mem"></text></g>
+        <g id="nd-off" class="nd"><rect x="20" y="150" width="176" height="50" rx="8"/><text class="t" x="32" y="170">Sydney office</text><text class="s" x="32" y="186">10.70.20.0/24 · 18 users</text></g>
+        <g id="nd-wan" class="nd dev"><rect x="250" y="90" width="150" height="56" rx="8"/><text class="t" x="262" y="112">grid_syd_wan</text><text class="s" x="262" y="129">router · .254.11</text></g>
+        <g id="nd-lon" class="nd ib"><rect x="250" y="258" width="150" height="46" rx="8"/><text class="t" x="262" y="277">London grid member</text><text class="s" x="262" y="293">10.80.1.10 · Infoblox</text></g>
+        <g id="nd-fw" class="nd fw"><rect x="470" y="76" width="160" height="106" rx="8"/><text class="t" x="550" y="118" text-anchor="middle">grid_pa_dc_fw</text><text class="s" x="550" y="134" text-anchor="middle">Palo Alto · .254.21</text>
+          <text class="port" x="477" y="98">e1/3</text><text class="port" x="477" y="166">e1/4</text><text class="port" x="623" y="147" text-anchor="end">e1/1</text><text class="port" x="600" y="175" text-anchor="middle">e1/2</text></g>
+        <g id="nd-core" class="nd dev"><rect x="690" y="100" width="150" height="56" rx="8"/><text class="t" x="702" y="122">grid_dc_core</text><text class="s" x="702" y="139">router · .254.31</text></g>
+        <g id="nd-apps" class="nd"><rect x="690" y="14" width="150" height="46" rx="8"/><text class="t" x="702" y="33">dc1 apps</text><text class="s" x="702" y="49">10.20.30.40:443</text></g>
+        <g id="nd-gm" class="nd ib"><rect x="690" y="236" width="160" height="60" rx="8"/><text class="t" x="702" y="256">Grid Master</text><text class="s" x="702" y="272">10.20.1.5 · Infoblox</text><text class="st" x="702" y="287" id="st-gm"></text></g>
+
+        <g id="xm" class="xm"><line x1="455" y1="143" x2="467" y2="155"/><line x1="467" y1="143" x2="455" y2="155"/><text x="428" y="201">deny · interzone-default</text></g>
+      </svg></div>
+      <div class="legend">
+        <span><i style="background:var(--ddi)"></i>grid tunnel (UDP 1194)</span>
+        <span><i style="background:var(--bad)"></i>grid traffic denied</span>
+        <span><i style="background:var(--link)"></i>link</span>
+        <span><i style="border:1.5px solid var(--flow);height:10px;width:14px;background:transparent"></i>exports flow</span>
+      </div>
+    </div>
+
+    <div class="panel" aria-live="polite">
+      <div class="card side-ddi"><span class="side-h"><i></i>INFOBLOX SEES</span><ul id="p-ddi"></ul></div>
+      <div class="card side-flow"><span class="side-h"><i></i>KENTIK SEES</span><ul id="p-flow"></ul></div>
+      <div class="card">
+        <span class="kick">Sydney member's grid records, 5 minutes</span>
+        <div class="hops" id="p-hops"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="tcap"><span>What <code>grid_pa_dc_fw</code> exports in this phase (sample)</span><span class="counts" id="p-counts"></span></div>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>firewallEvent</th><th>Source</th><th>Destination</th><th>In → Out</th><th class="num">Pkts</th><th class="num">Bytes</th><th>App-ID</th><th>User-ID</th><th class="num">flowId</th></tr></thead>
+        <tbody id="p-rows"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="record" aria-labelledby="record-h">
+  <div class="sec-h">
+    <h2 id="record-h">The PAN-OS record</h2>
+    <p>Template 257, "IPv4 Enterprise": 20 fields and 147 bytes a record, in the order on Palo Alto's NetFlow Templates page. Two thirds of every record is the App-ID and User-ID strings. These are the exact bytes of one denied retry from the Sydney member. Hover a field to find its bytes.</p>
+  </div>
+  <div class="groups" aria-hidden="true">
+    <div class="gs" style="flex:37">Standard NetFlow · 37 B</div>
+    <div class="gn" style="flex:10">Session · 10 B</div>
+    <div class="ge" style="flex:100">Palo Alto enterprise fields · 100 B</div>
+  </div>
+  <div class="anat">
+    <div class="card hex" id="hex" aria-label="Hex dump of one denied record"></div>
+    <div style="display:grid;gap:8px;align-content:start;min-width:0"><span class="kick">firewallEvent values (field 233)</span>
+    <div class="events">
+    <div class="card evc unused"><span class="v">0</span><span class="l">Ignore. Not used</span></div>
+    <div class="card evc lab"><span class="v">1</span><span class="l">Flow created</span></div>
+    <div class="card evc lab"><span class="v">2</span><span class="l">Flow deleted, end of session</span></div>
+    <div class="card evc den"><span class="v">3</span><span class="l">Flow denied by policy</span></div>
+    <div class="card evc unused"><span class="v">4</span><span class="l">Flow alert. Not used</span></div>
+    <div class="card evc lab"><span class="v">5</span><span class="l">Flow update, past the active timeout</span></div>
+  </div>
+    </div>
+  </div>
+    <div class="card fields tablebox">
+      <table>
+        <thead><tr><th class="num">ID</th><th>Field</th><th class="num">Bytes</th><th>This record</th><th>In Kentik</th><th>Length from</th></tr></thead>
+        <tbody id="fields"></tbody>
+      </table>
+    </div>
+  <details class="tmpl card" style="padding:12px 14px">
+    <summary>The template the firewall sends first (88 bytes)</summary>
+    <div class="codebox"><pre id="tmpl"></pre></div>
+  </details>
+</section>
+
+<section id="run" aria-labelledby="run-h">
+  <div class="sec-h">
+    <h2 id="run-h">Run it</h2>
+    <p>Run it on the lab droplet next to your Kentik agent, from <code>webinarlabs/grid-lab</code>. It uses Python 3 and the standard library only.</p>
+  </div>
+  <div class="steps">
+    <div class="step"><div><h3>Put the device IPs on loopback</h3><p class="muted">192.168.254.11, .21 and .31. Re-run after a reboot.</p>
+      <div class="codebox"><pre>sudo python3 grid_lab.py aliases --apply</pre><button class="copy" type="button">Copy</button></div></div></div>
+    <div class="step"><div><h3>Load your Kentik credentials</h3><p class="muted">Use the same <code>~/.kentik.env</code> as the other labs, with <code>chmod 600</code> on it. sudo drops these variables, so use <code>sudo -E</code> if you run the Kentik commands under sudo.</p>
+      <div class="codebox"><pre><span class="c"># ~/.kentik.env</span>
+export KENTIK_EMAIL="you@example.com"
+export KENTIK_API_TOKEN="..."
+export KENTIK_PLAN_ID="12345"
+
+source ~/.kentik.env</pre><button class="copy" type="button" data-copy="source ~/.kentik.env">Copy</button></div></div></div>
+    <div class="step"><div><h3>Onboard the three devices</h3><p class="muted">The firewall goes in as <b>Palo Alto Networks Firewall</b> (subtype <code>paloalto</code>). That type is what makes Kentik fill the Firewall Event and Application ID dimensions. The command reads the device list back and warns if the type didn't stick.</p>
+      <div class="codebox"><pre>python3 grid_lab.py kentik onboard --dry-run
+python3 grid_lab.py kentik onboard</pre><button class="copy" type="button">Copy</button></div></div></div>
+    <div class="step"><div><h3>Create the Grid lab role dimension</h3><p class="muted">This creates <code>c_src_gridrole</code> and <code>c_dst_gridrole</code>. The values are Sydney grid member, London grid member, Grid Master (dc1), Sydney office users and dc1 apps. It replaces all populators on these two dimensions.</p>
+      <div class="codebox"><pre>python3 grid_lab.py kentik dimensions --dry-run
+python3 grid_lab.py kentik dimensions</pre><button class="copy" type="button">Copy</button></div></div></div>
+    <div class="step"><div><h3>Send flow</h3><p class="muted">Type <code>before</code>, <code>maintenance</code>, <code>impact</code> or <code>fix</code> to jump to a phase, <code>status</code> for counters, or <code>quit</code> to stop. Use <code>--phase impact</code> instead of <code>--timeline</code> to stay on one phase.</p>
+      <div class="codebox"><pre>python3 grid_lab.py run --collector 127.0.0.1 --port 9995 --timeline "before:10,maintenance:3,impact:20,fix:10"</pre><button class="copy" type="button">Copy</button></div></div></div>
+    <div class="step"><div><h3>Check what's on the wire</h3><p class="muted"><code>listen</code> decodes the firewall's records with its PAN-OS fields. <code>preview</code> prints a phase without sending anything.</p>
+      <div class="codebox"><pre>python3 grid_lab.py listen --port 9996 --firewall-only &amp;
+python3 grid_lab.py run --port 9996 --no-bind --no-console --duration 30
+python3 grid_lab.py preview --phase impact
+python3 -m unittest -v test_grid_lab</pre><button class="copy" type="button">Copy</button></div></div></div>
+  </div>
+</section>
+
+<section id="kentik" aria-labelledby="kentik-h">
+  <div class="sec-h">
+    <h2 id="kentik-h">Show it in Kentik</h2>
+    <p>These are Data Explorer views, in the order you'd show them. The Palo Alto dimension names are from Kentik's KB. The other names are from memory, so check them in your portal.</p>
+  </div>
+  <div class="views">
+    <div class="card view"><h3>1 · Where the traffic dies</h3><dl><dt>Filter</dt><dd>source 10.70.1.10, destination 10.20.1.5</dd><dt>Group by</dt><dd>Device, Destination Port</dd><dt>Chart</dt><dd>time series</dd></dl>
+      <p class="see">All three devices carry the tunnel before maintenance. After it, <code>grid_syd_wan</code> and <code>grid_pa_dc_fw</code> still see the member, but <code>grid_dc_core</code> doesn't.</p></div>
+    <div class="card view"><h3>2 · The firewall says why</h3><dl><dt>Filter</dt><dd>device grid_pa_dc_fw, source 10.70.1.10</dd><dt>Group by</dt><dd>Firewall Event, Destination Port, Application ID, Input Interface</dd><dt>Chart</dt><dd>table</dd></dl>
+      <p class="see">Every row in <code>impact</code> is event 3 (Flow Denied) on 1194 or 2114, App-ID <code>not-applicable</code>, input interface 4.</p></div>
+    <div class="card view"><h3>3 · What the change did</h3><dl><dt>Filter</dt><dd>device grid_pa_dc_fw, Src Grid lab role = Sydney office users</dd><dt>Group by</dt><dd>Input Interface, Firewall Event</dd></dl>
+      <p class="see">Office traffic moves from interface 3 to 4 at maintenance and keeps getting created and deleted events. To the network team, the change worked.</p></div>
+    <div class="card view"><h3>4 · Only Sydney</h3><dl><dt>Filter</dt><dd>device grid_pa_dc_fw, destination port 1194</dd><dt>Group by</dt><dd>Src Grid lab role, Firewall Event</dd></dl>
+      <p class="see">London keeps sending update (5) records while Sydney's attempts are denied (3).</p></div>
+    <div class="card view"><h3>5 · The fix and the catch-up</h3><dl><dt>Filter</dt><dd>source 10.20.1.5, destination 10.70.1.10, device grid_pa_dc_fw</dd><dt>Chart</dt><dd>time series, bits/s</dd></dl>
+      <p class="see">After <code>fix</code>, catch-up replication peaks at about 1 Mbit/s in the first minute against a normal 56 kbit/s, then fades over four minutes. That's Victor's queue draining.</p></div>
+  </div>
+</section>
+
+<section id="prompts" aria-labelledby="prompts-h">
+  <div class="sec-h">
+    <h2 id="prompts-h">AI Advisor prompts</h2>
+    <p>Start open-ended and let it find the firewall. Then ask for specific views.</p>
+  </div>
+  <div class="prompts" id="prompt-list"></div>
+</section>
+
+<section id="notes" aria-labelledby="notes-h">
+  <div class="sec-h">
+    <h2 id="notes-h">Documented vs assumed</h2>
+    <p>How close this is to a real Palo, and what to check before showing it.</p>
+  </div>
+  <div class="notes">
+    <div class="card note"><h3>From Palo Alto's docs</h3><ul>
+      <li>NetFlow v9, template IDs 256–263. The lab uses 257, IPv4 with App-ID and User-ID.</li>
+      <li>Field IDs and order, firewallEvent values, and enterprise number 25461.</li>
+      <li>Default lengths: 4 bytes for counters, 2 for interfaces, up to 32 for App-ID and up to 64 for User-ID.</li>
+      <li>NetFlow profile defaults: template every 30 minutes or 20 packets, active timeout 5 minutes, port 2055.</li>
+      <li>Denied sessions are exported with event 3. Palo's community forum confirms you can't turn this off on the firewall.</li>
+    </ul></div>
+    <div class="card note"><h3>Chosen for the lab</h3><ul>
+      <li>Lengths Palo doesn't publish: flowId 8, firewallEvent 1, DIRECTION 1, ICMP_TYPE 2. Collectors read records by the template, so different lengths on real gear still parse.</li>
+      <li>A denied record carries the first packet, with output interface 0.</li>
+      <li>Short sessions get a created record for the first packet, then deleted records for the rest.</li>
+      <li>App-IDs <code>openvpn</code>, <code>unknown-udp</code> and <code>not-applicable</code>, and retries every 10 and 30 seconds.</li>
+      <li>Active timeout of 1 minute, which is valid in PAN-OS, so updates show up quickly.</li>
+    </ul></div>
+    <div class="card note"><h3>To check before the webinar</h3><ul>
+      <li>With Victor: what Grid Manager shows for an offline member, how it retries the tunnel and the key exchange, and whether it keeps serving DNS and DHCP locally.</li>
+      <li>In the portal: that the firewall's type is Palo Alto Networks Firewall and the dimensions fill in.</li>
+      <li>If you can get one: a minute of <code>tcpdump -w pan.pcap udp port 2055</code> from a real Palo. With that, the template can match byte for byte.</li>
+    </ul></div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <span>Lab source: <code>github.com/briandav22/webinarlabs</code>, folder <code>grid-lab</code>.</span>
+  <span>Sources</span>
+  <ul>
+    <li><a href="https://docs.paloaltonetworks.com/ngfw/administration/monitoring/netflow-monitoring/netflow-templates" target="_blank" rel="noopener">Palo Alto: NetFlow Templates</a></li>
+    <li><a href="https://docs.paloaltonetworks.com/ngfw/help/11-1/device/device-server-profiles-netflow" target="_blank" rel="noopener">Palo Alto: NetFlow server profile</a></li>
+    <li><a href="https://live.paloaltonetworks.com/t5/log-forwarding-discussions/how-to-avoid-netflow-record-for-denied-traffic/td-p/432538" target="_blank" rel="noopener">Palo Alto community: NetFlow records for denied traffic</a></li>
+    <li><a href="https://kb.kentik.com/docs/device-specific-dimensions" target="_blank" rel="noopener">Kentik KB: Device-specific dimensions</a></li>
+    <li><a href="https://kb.kentik.com/docs/network-devices" target="_blank" rel="noopener">Kentik KB: Network devices (subtype paloalto)</a></li>
+    <li><a href="https://new.kentik.com/palo-alto-networks-firewalls-support-added-2DrEt2" target="_blank" rel="noopener">Kentik: Palo Alto Networks firewalls support added</a></li>
+    <li><a href="https://infoblox-docs.atlassian.net/wiki/spaces/DeploymentGuidevNIOSforAWS/pages/736363674" target="_blank" rel="noopener">Infoblox: vNIOS network configuration (grid ports)</a></li>
+  </ul>
+</footer>
+</div>
+
+<script>
+const DATA = {"before":{"rows":[[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[5,"10.70.1.10",1194,"10.20.1.5",1194,17,3,1,954,210000,"openvpn","",674420],[5,"10.20.1.5",1194,"10.70.1.10",1194,17,1,3,1909,420000,"openvpn","",674420],[1,"10.70.20.86",55252,"10.20.30.40",443,6,3,1,1,60,"ssl","corp\\cpatel",674427],[2,"10.70.20.86",55252,"10.20.30.40",443,6,3,1,111,24692,"ssl","corp\\cpatel",674427],[2,"10.20.30.40",443,"10.70.20.86",55252,6,1,3,177,217356,"ssl","corp\\cpatel",674427]],"seen":{"grid_syd_wan":10,"grid_pa_dc_fw":10,"grid_dc_core":10},"events":{"1":463,"2":926,"5":20}},"maintenance":{"rows":[[2,"10.70.1.10",1194,"10.20.1.5",1194,17,3,1,79,17500,"openvpn","",674420],[2,"10.20.1.5",1194,"10.70.1.10",1194,17,1,3,159,35000,"openvpn","",674420],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390]],"seen":{"grid_syd_wan":2,"grid_pa_dc_fw":2,"grid_dc_core":2},"events":{"2":2,"5":10}},"impact":{"rows":[[3,"10.70.1.10",53443,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",674631],[3,"10.70.1.10",61726,"10.20.1.5",2114,17,4,0,1,120,"not-applicable","",674639],[3,"10.70.1.10",55835,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",674755],[3,"10.70.1.10",56489,"10.20.1.5",1194,17,4,0,1,86,"not-applicable","",675157],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[1,"10.70.20.111",55252,"10.20.30.40",443,6,4,1,1,60,"ssl","corp\\ekelly",674397],[2,"10.70.20.111",55252,"10.20.30.40",443,6,4,1,111,24692,"ssl","corp\\ekelly",674397],[2,"10.20.30.40",443,"10.70.20.111",55252,6,1,4,177,217356,"ssl","corp\\ekelly",674397]],"seen":{"grid_syd_wan":42,"grid_pa_dc_fw":42,"grid_dc_core":0},"events":{"1":448,"2":896,"3":42,"5":10}},"fix":{"rows":[[1,"10.70.1.10",59161,"10.20.1.5",2114,17,4,1,1,400,"unknown-udp","",676322],[2,"10.70.1.10",59161,"10.20.1.5",2114,17,4,1,5,2000,"unknown-udp","",676322],[2,"10.20.1.5",2114,"10.70.1.10",59161,17,1,4,6,2100,"unknown-udp","",676322],[1,"10.70.1.10",58118,"10.20.1.5",1194,17,4,1,1,140,"openvpn","",676328],[5,"10.80.1.10",1194,"10.20.1.5",1194,17,2,1,954,210000,"openvpn","",674390],[5,"10.20.1.5",1194,"10.80.1.10",1194,17,1,2,1909,420000,"openvpn","",674390],[1,"10.70.20.86",62981,"10.20.30.40",443,6,4,1,1,60,"ssl","corp\\cpatel",676344],[2,"10.70.20.86",62981,"10.20.30.40",443,6,4,1,90,23327,"ssl","corp\\cpatel",676344],[2,"10.20.30.40",443,"10.70.20.86",62981,6,1,4,119,162197,"ssl","corp\\cpatel",676344]],"seen":{"grid_syd_wan":10,"grid_pa_dc_fw":12,"grid_dc_core":10},"events":{"1":450,"2":898,"5":18}},"hex":"0000005600000001110000d0c30a46010a000404aa0a14010500000f85ea870f85ea8700000000000000000a4b4703000063756e6f742d6170706c696361626c6500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000","denied":{"src":"10.70.1.10","dst":"10.20.1.5","sport":53443,"dport":1194,"proto":17,"flags":0,"tos":0,"in_if":4,"out_if":0,"pkts":1,"bytes":86,"first":100035.0,"last":100035.0,"event":3,"flow_id":674631,"app":"not-applicable","user":"","first_ms":260434567,"last_ms":260434567},"template_hex":"000000580101001400010004000200040004000100050001000600010007000200080004000a0002000b0002000c0004000e0002001500040016000400200002003d00010094000800e90001015a0004dd7d0020dd7e0040"};
+const PH = {
+  before: {kick:"before · normal day", title:"Both grid tunnels are up",
+    links:{mem:"",off:"",mpls:"",sdwan:"off",lon:"",fwcore:"",apps:"",gm:""},
+    grid:{mem:"on",mpls:"on",sdwan:"",lon:"on",fwcore:"on",gm:"on"}, labels:{mpls:"",sdwan:"off",gm:"tunnel"},
+    nodes:{mem:"ok",wan:"",off:"",fw:"",gm:"ok"}, st:{mem:"Running",gm:"replication current"}, x:false,
+    ddi:["Sydney and London members show as running and connected to the Grid Master.","Replication is current."],
+    flow:["Every minute the firewall sends update (5) records for both tunnels, App-ID openvpn.","All three devices carry 10.70.1.10 ↔ 10.20.1.5 on UDP 1194. Sydney arrives on ethernet1/3, zone apac-wan."],
+    hops:["carries the tunnel","update records","carries the tunnel"]},
+  maintenance: {kick:"maintenance · change window", title:"Sydney's circuit moves from MPLS to SD-WAN",
+    links:{mem:"off",off:"off",mpls:"down",sdwan:"off",lon:"",fwcore:"",apps:"off",gm:""},
+    grid:{mem:"",mpls:"",sdwan:"",lon:"on",fwcore:"on",gm:"on"}, labels:{mpls:"bad",sdwan:"off",gm:"London only"},
+    nodes:{mem:"warn",wan:"idle",off:"idle",fw:"",gm:""}, st:{mem:"offline",gm:"Sydney unreachable"}, x:false,
+    ddi:["The Sydney member loses the Grid Master and shows as offline.","Victor can say what the member keeps doing locally while it's cut off."],
+    flow:["Sydney goes quiet: grid_syd_wan exports nothing toward dc1.","The firewall closes Sydney's tunnel session with a deleted (2) record. London keeps sending updates."],
+    hops:["final counts, then nothing","deleted (2)","final counts, then nothing"]},
+  impact: {kick:"impact · change closed", title:"Users are fine, and the grid is blocked",
+    links:{mem:"",off:"",mpls:"off",sdwan:"",lon:"",fwcore:"",apps:"",gm:""},
+    grid:{mem:"bad",mpls:"",sdwan:"bad",lon:"on",fwcore:"on",gm:"on"}, labels:{mpls:"off",sdwan:"",gm:"London only"},
+    nodes:{mem:"bad",wan:"",off:"",fw:"bad",gm:"warn"}, st:{mem:"offline · retrying",gm:"Sydney queue growing"}, x:true,
+    ddi:["The change window closes, and Sydney is still offline.","Changes on the Grid Master queue up for Sydney, and the queue keeps growing. Nothing in DDI says why."],
+    flow:["Office users are back on ethernet1/4 (apac-sdwan) with created and deleted records, so the change looks successful.","Every try from 10.70.1.10 on UDP 1194 and 2114 is denied (3): App-ID not-applicable, output interface 0.","grid_dc_core never sees the member, and nothing comes back."],
+    hops:["forwards every try","denies every try","sees nothing"], denied:1},
+  fix: {kick:"fix · grid rule updated", title:"The grid rule gets zone apac-sdwan",
+    links:{mem:"",off:"",mpls:"off",sdwan:"",lon:"",fwcore:"",apps:"",gm:""},
+    grid:{mem:"on",mpls:"",sdwan:"on",lon:"on",fwcore:"on",gm:"on"}, labels:{mpls:"off",sdwan:"",gm:"catch-up"},
+    nodes:{mem:"ok",wan:"",off:"",fw:"",gm:"ok"}, st:{mem:"Running",gm:"Sydney queue draining"}, x:false,
+    ddi:["The member runs the key exchange, brings its tunnel back up and shows as running.","The replication queue drains."],
+    flow:["created (1) and deleted (2) for the key exchange on 2114, created (1) for a new tunnel on 1194, then updates.","Grid Master → Sydney traffic jumps to about 1 Mbit/s for a few minutes, then settles back to about 56 kbit/s."],
+    hops:["carries the tunnel","created, then updates","carries the tunnel"]}
+};
+const EVN = {1:"created",2:"deleted",3:"denied",5:"update"};
+const IFN = {"grid_pa_dc_fw":{0:"—",1:"e1/1",2:"e1/2",3:"e1/3",4:"e1/4"}};
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmtN = n => n.toLocaleString("en-US");
+
+function show(ph){
+  const p = PH[ph], d = DATA[ph];
+  document.querySelectorAll(".ph").forEach(b => { const on = b.dataset.ph === ph; b.setAttribute("aria-selected", on); b.tabIndex = on ? 0 : -1; });
+  $("#stage").setAttribute("aria-labelledby", "tab-" + ph);
+  for (const [k, v] of Object.entries(p.links)) $("#ln-" + k).setAttribute("class", "ln " + v);
+  for (const k of ["mem","mpls","sdwan","lon","fwcore","gm"]) $("#gl-" + k).setAttribute("class", "gl " + (p.grid[k] || ""));
+  $("#lb-mpls").setAttribute("class", "lnl " + p.labels.mpls);
+  $("#lb-mpls").textContent = ph === "maintenance" ? "cutover" : "MPLS";
+  $("#lb-sdwan").setAttribute("class", "lnl " + p.labels.sdwan);
+  $("#lb-gm").textContent = p.labels.gm;
+  const base = {mem:"nd ib",wan:"nd dev",off:"nd",fw:"nd fw",gm:"nd ib"};
+  for (const [k, v] of Object.entries(p.nodes)) $("#nd-" + k).setAttribute("class", base[k] + " " + v);
+  $("#st-mem").textContent = p.st.mem; $("#st-gm").textContent = p.st.gm;
+  $("#xm").setAttribute("class", "xm" + (p.x ? " on" : ""));
+  $("#p-kick").textContent = p.kick; $("#p-title").textContent = p.title;
+  $("#p-ddi").innerHTML = p.ddi.map(t => "<li>" + esc(t) + "</li>").join("");
+  $("#p-flow").innerHTML = p.flow.map(t => "<li>" + esc(t) + "</li>").join("");
+  const devs = ["grid_syd_wan","grid_pa_dc_fw","grid_dc_core"], max = 42;
+  $("#p-hops").innerHTML = devs.map((dv, i) => {
+    const n = d.seen[dv], den = p.denied && dv === "grid_pa_dc_fw";
+    return `<div class="hop${den ? " denied" : ""}"><span class="d">${dv}</span><span class="bar"><span style="width:${Math.max(n ? 3 : 0, 100 * n / max)}%"></span></span><span class="c">${n}</span><span class="what">${esc(p.hops[i])}</span></div>`;
+  }).join("");
+  const order = [3,1,2,5];
+  $("#p-counts").textContent = "all firewall records, 5 min: " + order.filter(e => d.events[e]).map(e => fmtN(d.events[e]) + " " + EVN[e]).join(" · ");
+  $("#p-rows").innerHTML = d.rows.map(r => {
+    const [ev, src, sp, dst, dp, proto, i, o, pk, by, app, user, fid] = r;
+    const pr = proto === 17 ? "udp" : "tcp";
+    return `<tr class="${ev === 3 ? "denied" : ""}"><td><span class="ev ev${ev}">${ev} ${EVN[ev]}</span></td><td>${src}:${sp}</td><td>${dst}:${dp} ${pr}</td><td>${i} ${IFN.grid_pa_dc_fw[i]} → ${o} ${IFN.grid_pa_dc_fw[o]}</td><td class="num">${fmtN(pk)}</td><td class="num">${fmtN(by)}</td><td>${esc(app)}</td><td>${esc(user || "—")}</td><td class="num">${fid}</td></tr>`;
+  }).join("");
+  try { localStorage.setItem("gridlab-phase", ph); } catch (e) {}
+}
+
+// record anatomy
+const F = [
+  [1,"IN_BYTES",4,"std","Bytes (metric)","doc"],[2,"IN_PKTS",4,"std","Packets (metric)","doc"],[4,"PROTOCOL",1,"std","Protocol","std"],
+  [5,"TOS",1,"std","ToS","std"],[6,"TCP_FLAGS",1,"std","TCP Flags","std"],[7,"L4_SRC_PORT",2,"std","Source Port","std"],
+  [8,"IPV4_SRC_ADDR",4,"std","Source IP","std"],[10,"INPUT_SNMP",2,"std","Input Interface","doc"],[11,"L4_DST_PORT",2,"std","Destination Port","std"],
+  [12,"IPV4_DST_ADDR",4,"std","Destination IP","std"],[14,"OUTPUT_SNMP",2,"std","Output Interface","doc"],[21,"LAST_SWITCHED",4,"std","flow timing","std"],
+  [22,"FIRST_SWITCHED",4,"std","flow timing","std"],[32,"ICMP_TYPE",2,"std","ICMP Type","std"],[61,"DIRECTION",1,"ses","Direction","std"],
+  [148,"flowId",8,"ses","Flow ID","std"],[233,"firewallEvent",1,"ses","Firewall Event","std"],[346,"privateEnterpriseNumber",4,"ent","marks Palo Alto fields","doc"],
+  [56701,"App-ID",32,"ent","Application ID","doc"],[56702,"User-ID",64,"ent","User ID","doc"]
+];
+const PAN_DIMS = new Set([32,61,148,233,56701,56702]);
+function anatomy(){
+  const hex = DATA.hex, bytes = []; for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
+  const owner = []; let off = 0; const spans = [];
+  F.forEach((f, fi) => { spans.push([off, off + f[2]]); for (let k = 0; k < f[2]; k++) owner.push(fi); off += f[2]; });
+  const g = {std:"gs",ses:"gn",ent:"ge"};
+  let html = "";
+  for (let r = 0; r < bytes.length; r += 16) {
+    let cells = "", asc = "";
+    for (let c = 0; c < 16; c++) {
+      const i = r + c;
+      if (i < bytes.length) {
+        const b = bytes[i], fi = owner[i];
+        cells += `<span class="b ${g[F[fi][3]]}${b === 0 ? " z0" : ""}" data-f="${fi}">${b.toString(16).padStart(2, "0")}</span>`;
+        asc += `<span data-f="${fi}">${b >= 32 && b < 127 ? esc(String.fromCharCode(b)) : "·"}</span>`;
+      } else cells += "<span></span>";
+    }
+    html += `<div class="hexrow"><span class="o">${r.toString(16).padStart(4, "0")}</span>${cells}<span></span><span class="asc">${asc}</span></div>`;
+  }
+  $("#hex").innerHTML = html;
+  const d = DATA.denied;
+  const val = {1:d.bytes,2:d.pkts,4:"17 (UDP)",5:0,6:0,7:d.sport,8:d.src,10:"4 (ethernet1/4)",11:d.dport,12:d.dst,14:"0 (none)",
+    21:fmtN(d.last_ms)+" ms",22:fmtN(d.first_ms)+" ms",32:0,61:"0 (ingress)",148:d.flow_id,233:"3 (denied)",346:25461,56701:'"'+d.app+'"',56702:'"" (no user)'};
+  $("#fields").innerHTML = F.map((f, fi) => `<tr data-f="${fi}" tabindex="0"><td class="num">${f[0]}</td><td>${f[1]}</td><td class="num">${f[2]}</td><td>${esc(val[f[0]])}</td><td>${PAN_DIMS.has(f[0]) ? "<b>" + f[4] + "</b>" : f[4]}</td><td><span class="src ${f[5] === "doc" ? "doc" : ""}">${f[5] === "doc" ? "Palo doc" : "standard"}</span></td></tr>`).join("");
+  const hl = fi => {
+    document.querySelectorAll(".hl").forEach(e => e.classList.remove("hl"));
+    if (fi == null) return;
+    document.querySelectorAll(`[data-f="${fi}"]`).forEach(e => e.classList.add("hl"));
+  };
+  const on = e => { const t = e.target.closest("[data-f]"); hl(t ? t.dataset.f : null); };
+  for (const id of ["#hex", "#fields"]) {
+    $(id).addEventListener("mouseover", on); $(id).addEventListener("focusin", on);
+    $(id).addEventListener("mouseleave", () => hl(null));
+  }
+  // template flowset, grouped
+  const t = DATA.template_hex.match(/.{8}/g), names = F.map(f => f[1]);
+  const lines = ["<span class=\"c\"># flowset 0 = template, length 88; template 257 with 20 fields</span>", t[0] + "  " + t[1]];
+  for (let i = 0; i < 20; i++) lines.push(t[2 + i] + `  <span class="c"># ${F[i][0]} ${names[i]}, ${F[i][2]} bytes</span>`);
+  $("#tmpl").innerHTML = lines.join("\n");
+}
+
+const PROMPTS = [
+  ["open-ended","Our Sydney Infoblox grid member went offline after last night's network maintenance. Look at flow for 10.70.1.10 over the last hour and tell me where its traffic to the Grid Master stops."],
+  ["direct","On grid_pa_dc_fw, show flows from 10.70.1.10 grouped by firewall event, destination port and application ID."],
+  ["direct","Which sources had flows denied by grid_pa_dc_fw in the last 30 minutes, and on which input interface did they arrive?"],
+  ["direct","Compare firewall events for UDP 1194 between the Sydney and London grid members as a time series."],
+  ["direct","Show traffic from 10.20.1.5 to 10.70.1.10 in bits per second over the last hour."]
+];
+$("#prompt-list").innerHTML = PROMPTS.map(([k, t]) => `<div class="card prompt"><p><span class="tag">${k}</span>${esc(t)}</p><button class="copy" type="button" data-copy="${esc(t)}">Copy</button></div>`).join("");
+
+document.addEventListener("click", e => {
+  const b = e.target.closest(".copy"); if (!b) return;
+  const text = b.dataset.copy || b.parentElement.querySelector("pre").innerText;
+  const done = ok => { b.textContent = ok ? "Copied" : "Select"; setTimeout(() => b.textContent = "Copy", 1600); };
+  const fallback = () => {
+    const el = b.parentElement.querySelector("pre, p");
+    const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); done(false);
+  };
+  try { navigator.clipboard.writeText(text).then(() => done(true), fallback); } catch (err) { fallback(); }
+});
+
+const tabs = [...document.querySelectorAll(".ph")];
+tabs.forEach((b, i) => {
+  b.addEventListener("click", () => show(b.dataset.ph));
+  b.addEventListener("keydown", e => {
+    const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+    if (!d) return; e.preventDefault();
+    const n = tabs[(i + d + tabs.length) % tabs.length]; n.focus(); show(n.dataset.ph);
+  });
+});
+let start = "impact";
+try { const s = localStorage.getItem("gridlab-phase"); if (s && PH[s]) start = s; } catch (e) {}
+anatomy();
+show(start);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,184 @@
+import ipaddress, socket, struct, time, unittest
+import grid_lab as L
+
+
+def run(*phases, seed=7):
+    """[(phase, seconds)] -> [(phase, device, record)]"""
+    return L.simulate(list(phases), seed=seed)
+
+
+def grid(r):
+    return L.VPN_PORT in (r["sport"], r["dport"]) or L.KEYX_PORT in (r["sport"], r["dport"])
+
+
+def syd(r):
+    return L.SYD_MEMBER in (r["src"], r["dst"])
+
+
+class TestScenario(unittest.TestCase):
+    def test_before(self):
+        f = [(d, r) for _, d, r in run(("before", 180))]
+        fw = [r for d, r in f if d == L.FIREWALL]
+        self.assertFalse(any(r["event"] == L.DENIED for r in fw))
+        tun = [r for r in fw if grid(r)]
+        self.assertTrue(tun and all(r["event"] == L.UPDATED and r["app"] == "openvpn" for r in tun),
+                        "tunnels already up: only update events")
+        self.assertEqual({r["in_if"] for r in fw if r["src"] == L.SYD_MEMBER}, {3}, "Sydney arrives on the MPLS port")
+        self.assertTrue(any(d == "grid_dc_core" and r["src"] == L.SYD_MEMBER and r["dst"] == L.GRID_MASTER for d, r in f))
+
+    def test_maintenance_deletes_the_tunnel_and_sydney_goes_quiet(self):
+        f = run(("before", 60), ("maintenance", 120))
+        m = [(d, r) for ph, d, r in f if ph == "maintenance"]
+        dele = [r for d, r in m if d == L.FIREWALL and r["event"] == L.DELETED]
+        self.assertEqual({(r["src"], r["dst"]) for r in dele}, {(L.SYD_MEMBER, L.GRID_MASTER), (L.GRID_MASTER, L.SYD_MEMBER)})
+        self.assertTrue(all(r["dport"] == L.VPN_PORT or r["sport"] == L.VPN_PORT for r in dele))
+        later = [(d, r) for d, r in m[len(m) // 2:]]
+        self.assertFalse(any(syd(r) for d, r in later), "nothing to or from Sydney once the circuit is down")
+        self.assertFalse(any(d == "grid_syd_wan" for d, r in later))
+        self.assertTrue(any(r["src"] == L.LON_MEMBER for d, r in later), "London keeps its tunnel")
+
+    def test_impact_denied_at_the_firewall(self):
+        f = [(d, r) for ph, d, r in run(("maintenance", 30), ("impact", 180)) if ph == "impact"]
+        fw_syd = [r for d, r in f if d == L.FIREWALL and r["src"] == L.SYD_MEMBER]
+        self.assertTrue(fw_syd)
+        self.assertTrue(all(r["event"] == L.DENIED and r["app"] == "not-applicable" for r in fw_syd))
+        self.assertEqual({r["dport"] for r in fw_syd}, {1194, 2114})
+        self.assertEqual({(r["in_if"], r["out_if"]) for r in fw_syd}, {(4, 0)}, "arrives on ethernet1/4, goes nowhere")
+        n = {p: sum(1 for r in fw_syd if r["dport"] == p) for p in (1194, 2114)}
+        self.assertEqual(n, {1194: 19, 2114: 7}, "one try right away, then every 10 s on 1194 and every 30 s on 2114")
+        self.assertFalse(any(syd(r) for d, r in f if d == "grid_dc_core"), "dc1 never sees the member")
+        self.assertFalse(any(r["src"] == L.GRID_MASTER and r["dst"] == L.SYD_MEMBER for _, r in f), "no replies")
+        wan = [r for d, r in f if d == "grid_syd_wan" and r["src"] == L.SYD_MEMBER]
+        self.assertTrue(wan and all((r["in_if"], r["out_if"]) == (1, 3) for r in wan), "the WAN router forwards it")
+        office = [r for d, r in f if d == L.FIREWALL and r["dport"] == L.APP_PORT]
+        self.assertTrue(office and all(r["event"] in (L.CREATED, L.DELETED) and r["in_if"] == 4 for r in office),
+                        "office users allowed on the new zone")
+        self.assertTrue(all(r["user"].startswith("corp\\") for r in office))
+        self.assertTrue(any(r["src"] == L.LON_MEMBER and r["event"] == L.UPDATED for d, r in f if d == L.FIREWALL))
+
+    def test_fix(self):
+        f = [(d, r) for ph, d, r in run(("impact", 30), ("fix", 300)) if ph == "fix"]
+        fw = [r for d, r in f if d == L.FIREWALL and syd(r)]
+        self.assertFalse(any(r["event"] == L.DENIED for r in fw))
+        ev = [(r["event"], r["dport"] if r["src"] == L.SYD_MEMBER else r["sport"]) for r in fw]
+        self.assertEqual(ev[:2], [(L.CREATED, 2114), (L.DELETED, 2114)], "key exchange first")
+        self.assertIn((L.CREATED, 1194), ev)
+        self.assertTrue(ev.index((L.CREATED, 1194)) > 1)
+        self.assertIn((L.UPDATED, 1194), ev)
+        self.assertTrue(any(d == "grid_dc_core" and r["dst"] == L.SYD_MEMBER for d, r in f))
+        down = [r["bytes"] for r in fw if r["src"] == L.GRID_MASTER and r["event"] == L.UPDATED]
+        self.assertGreater(down[0], 5 * down[-1], "catch-up replication burst, then back to normal")
+
+    def test_flow_ids(self):
+        f = [r for _, d, r in run(("before", 60), ("impact", 120)) if d == L.FIREWALL]
+        denied = [r["flow_id"] for r in f if r["event"] == L.DENIED]
+        self.assertEqual(len(denied), len(set(denied)), "each denied attempt is its own session")
+        tun = {r["flow_id"] for r in f if r["src"] == L.LON_MEMBER or r["dst"] == L.LON_MEMBER}
+        self.assertEqual(len(tun), 1, "both directions of a session share its flowId")
+
+    def test_pan_template_layout(self):
+        t = L.PAN_TEMPLATE
+        self.assertEqual(t.tid, 257)
+        ids = [i for i, _ in t.fields]
+        self.assertEqual(ids, [1, 2, 4, 5, 6, 7, 8, 10, 11, 12, 14, 21, 22, 32, 61, 148, 233, 346, 56701, 56702])
+        self.assertEqual(dict(t.fields)[56701], 32)
+        self.assertEqual(dict(t.fields)[56702], 64)
+        self.assertEqual(t.size, 147)
+
+    def test_encode_decode_pan(self):
+        recs = [r for _, d, r in run(("impact", 60)) if d == L.FIREWALL][:9]
+        pkt = L.encode(L.PAN_TEMPLATE, recs, 5, 0.0, 1000.0, 2, True)
+        hdr, out = L.decode(pkt, {})
+        self.assertEqual(hdr["count"], 10)
+        self.assertEqual(len(out), 9)
+        for a, b in zip(recs, out):
+            for k in ("src", "dst", "sport", "dport", "proto", "in_if", "out_if", "pkts", "bytes", "event",
+                      "flow_id", "app", "user"):
+                self.assertEqual(a[k], b[k], k)
+            self.assertEqual(b["pen"], 25461)
+
+    def test_independent_decoder(self):
+        """The netflow package (bitkeks/python-netflow-v9-v5-ipfix) reads the same packets."""
+        try:
+            import netflow
+        except ImportError:
+            self.skipTest("pip install netflow")
+        recs = [r for _, d, r in run(("impact", 60)) if d == L.FIREWALL][:9]
+        pkt = L.encode(L.PAN_TEMPLATE, recs, 1, 0.0, 1000.0, 2, True)
+        p = netflow.parse_packet(pkt, {"netflow": {}, "ipfix": {}})
+        self.assertEqual(p.header.version, 9)
+        flows = [f.data for f in p.flows]
+        self.assertEqual(len(flows), 9)
+        for a, b in zip(recs, flows):
+            self.assertEqual(str(ipaddress.ip_address(b["IPV4_SRC_ADDR"])), a["src"])
+            self.assertEqual(b["L4_DST_PORT"], a["dport"])
+            self.assertEqual(b["INPUT_SNMP"], a["in_if"])
+            self.assertEqual(b["OUTPUT_SNMP"], a["out_if"])
+            self.assertEqual(b["IN_BYTES"], a["bytes"])
+
+    def test_each_device_sends_from_its_own_ip(self):
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        rx.bind(("127.0.0.1", 0)); rx.settimeout(2)
+        ips = {n: "127.0.0.%d" % (61 + i) for i, n in enumerate(L.DEVICES)}
+        exs = L.make_exporters(rx.getsockname(), ips=ips)
+        by = {n: [] for n in L.DEVICES}
+        for _, d, r in run(("impact", 60)):
+            by[d].append(r)
+        for n, recs in by.items():
+            exs[n].send(recs, time.time())
+        tm, seen = {}, {}
+        try:
+            while True:
+                pkt, (ip, _) = rx.recvfrom(65535)
+                seen.setdefault(ip, []).extend(L.decode(pkt, tm)[1])
+        except socket.timeout:
+            pass
+        self.assertEqual(set(seen), set(ips.values()))
+        for n, ip in ips.items():
+            self.assertEqual(len(seen[ip]), len(by[n]), n)
+            want = 257 if n == L.FIREWALL else 256
+            self.assertTrue(all(r["template"] == want for r in seen[ip]), n)
+        self.assertTrue(any(r["event"] == L.DENIED for r in seen[ips[L.FIREWALL]]))
+        for e in exs.values():
+            e.sock.close()
+        rx.close()
+
+    def test_pan_template_refresh(self):
+        rx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        rx.bind(("127.0.0.1", 0)); rx.settimeout(1)
+        exs = L.make_exporters(rx.getsockname(), ips={n: "127.0.0.1" for n in L.DEVICES})
+        ex = exs[L.FIREWALL]
+        recs = [r for _, d, r in run(("impact", 120)) if d == L.FIREWALL][:9 * 45]
+        ex.send(recs, time.time())
+        tmpl = []
+        try:
+            while True:
+                pkt, _ = rx.recvfrom(65535)
+                tmpl.append(struct.unpack("!H", pkt[20:22])[0] == 0)
+        except socket.timeout:
+            pass
+        self.assertEqual(len(tmpl), 45)
+        self.assertEqual([i for i, t in enumerate(tmpl) if t], [0, 21, 42], "first packet, then after 20 packets")
+        self.assertEqual(ex.seq, 45, "v9 sequence counts export packets")
+        for e in exs.values():
+            e.sock.close()
+        rx.close()
+
+    def test_onboard_payload(self):
+        devs = {d["deviceName"]: d for d in L.build_devices(99)}
+        self.assertEqual(devs[L.FIREWALL]["deviceSubtype"], "paloalto")
+        self.assertEqual({d["deviceSubtype"] for n, d in devs.items() if n != L.FIREWALL}, {"router"})
+        self.assertEqual({d["sendingIps"][0] for d in devs.values()},
+                         {"192.168.254.11", "192.168.254.21", "192.168.254.31"})
+        self.assertTrue(all(d["deviceSampleRate"] == 1 for d in devs.values()))
+
+    def test_dimensions(self):
+        plan = L.dimension_plan()
+        self.assertEqual([d["name"] for d in plan], ["c_src_gridrole", "c_dst_gridrole"])
+        nets = {u["value"]: ipaddress.ip_network(u["criteria"][0]["addr"][0]) for u in plan[0]["upserts"]}
+        self.assertIn(ipaddress.ip_address(L.SYD_MEMBER), nets["Sydney grid member"])
+        self.assertTrue(all(ipaddress.ip_address(ip) in nets["Sydney office users"] for ip, _ in L.office_hosts()))
+
+
+if __name__ == "__main__":
+    unittest.main()
